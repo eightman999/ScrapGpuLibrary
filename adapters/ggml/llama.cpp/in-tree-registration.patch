@@ -1,0 +1,73 @@
+diff --git a/ggml/CMakeLists.txt b/ggml/CMakeLists.txt
+index 4af7fc881..3425273fd 100644
+--- a/ggml/CMakeLists.txt
++++ b/ggml/CMakeLists.txt
+@@ -264,6 +264,7 @@ option(GGML_ET                              "ggml: use ET backend"
+ option(GGML_ET_SYSEMU                       "ggml: use ET backend via sysemu"                 OFF)
+ 
+ option(GGML_OPENCL                          "ggml: use OpenCL"                                OFF)
++option(GGML_CL11                            "ggml: use the OpenCL 1.1 backend (old GPUs, e.g. NVIDIA Fermi)" OFF)
+ option(GGML_OPENCL_PROFILING                "ggml: use OpenCL profiling (increases overhead)" OFF)
+ option(GGML_OPENCL_EMBED_KERNELS            "ggml: embed kernels"                             ON)
+ option(GGML_OPENCL_USE_ADRENO_KERNELS       "ggml: use optimized kernels for Adreno"          ON)
+diff --git a/ggml/cmake/ggml-config.cmake.in b/ggml/cmake/ggml-config.cmake.in
+index a28e49e83..26fd45f7b 100644
+--- a/ggml/cmake/ggml-config.cmake.in
++++ b/ggml/cmake/ggml-config.cmake.in
+@@ -80,6 +80,11 @@ if (NOT GGML_SHARED_LIB)
+         set(GGML_OPENCL_INTERFACE_LINK_LIBRARIES $<LINK_ONLY:OpenCL::OpenCL>)
+     endif()
+ 
++    if (GGML_CL11)
++        find_dependency(OpenCL)
++        set(GGML_CL11_INTERFACE_LINK_LIBRARIES $<LINK_ONLY:OpenCL::OpenCL>)
++    endif()
++
+     if (GGML_VULKAN)
+         find_dependency(Vulkan)
+         set(GGML_VULKAN_INTERFACE_LINK_LIBRARIES $<LINK_ONLY:Vulkan::Vulkan>)
+diff --git a/ggml/src/CMakeLists.txt b/ggml/src/CMakeLists.txt
+index 947732000..fe979e1f5 100644
+--- a/ggml/src/CMakeLists.txt
++++ b/ggml/src/CMakeLists.txt
+@@ -600,6 +600,7 @@ ggml_add_backend(Vulkan)
+ ggml_add_backend(WebGPU)
+ ggml_add_backend(zDNN)
+ ggml_add_backend(OpenCL)
++ggml_add_backend(CL11)
+ ggml_add_backend(Hexagon)
+ ggml_add_backend(ZenDNN)
+ ggml_add_backend(OPENVINO)
+diff --git a/ggml/src/ggml-backend-reg.cpp b/ggml/src/ggml-backend-reg.cpp
+index 1c18b82cd..0015bbef8 100644
+--- a/ggml/src/ggml-backend-reg.cpp
++++ b/ggml/src/ggml-backend-reg.cpp
+@@ -58,6 +58,10 @@
+ #include "ggml-opencl.h"
+ #endif
+ 
++#ifdef GGML_USE_CL11
++#include "ggml-cl11.h"
++#endif
++
+ #ifdef GGML_USE_HEXAGON
+ #include "ggml-hexagon.h"
+ #endif
+@@ -147,6 +151,9 @@ struct ggml_backend_registry {
+ #ifdef GGML_USE_OPENCL
+         register_backend(ggml_backend_opencl_reg());
+ #endif
++#ifdef GGML_USE_CL11
++        register_backend(ggml_backend_cl11_reg());
++#endif
+ #ifdef GGML_USE_ZENDNN
+         register_backend(ggml_backend_zendnn_reg());
+ #endif
+@@ -593,6 +600,7 @@ void ggml_backend_load_all_from_path(const char * dir_path) {
+     ggml_backend_load_best("vulkan", silent, dir_path);
+     ggml_backend_load_best("virtgpu", silent, dir_path);
+     ggml_backend_load_best("opencl", silent, dir_path);
++    ggml_backend_load_best("cl11", silent, dir_path);
+     ggml_backend_load_best("hexagon", silent, dir_path);
+     ggml_backend_load_best("musa", silent, dir_path);
+     ggml_backend_load_best("openvino", silent, dir_path);
