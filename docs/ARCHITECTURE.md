@@ -63,7 +63,41 @@ adapters  ──►  ops / quant  ──►  tensor
 | カーネル | OpenCL C 1.1 のカーネルを opencl11 / opencl12 で共有し、1.2 以降の機能は opencl12 側だけで使う。vulkan は GLSL → SPIR-V |
 | 精度 | 演算は FP32。fp16 は保存形式として扱い、読み書きのときに変換する（Fermi / Kepler には fp16 演算がない） |
 | デバイス知識 | ワークグループサイズ、カーネル選択、使ってはいけない機能などは、コードではなくデバイスデータベース（runtime/device）に置く。新しい GPU はデータの追加で対応する |
-| 試験 | ops ごとに CPU 参照実装と比較する単体試験を持つ。ggml adapter では llama.cpp の `test-backend-ops` と、生成結果の CPU との一致を回帰試験に使う |
+| 試験 | ops ごとに CPU 参照実装と比較する単体試験を持つ。正しさは誤差の許容範囲で判定する（下記「正しさの基準」） |
+
+## 正しさの基準
+
+生成したトークンが CPU と一致するかどうかは、正しさの基準にしません。量子化した重みとの内積で、CPU（ggml の CPU バックエンド）は活性化（src1）を 8bit に量子化してから計算し、CL11 は FP32 のまま計算します。そのため CL11 のほうが本来の積に近くても、Q4_K 系では 20 トークン前後で greedy の生成が分岐することがあります。トークンが違っても、誤りとは限りません。
+
+| 階層 | 指標 | 位置付け |
+| --- | --- | --- |
+| op 単体 | CPU 参照との NMSE（llama.cpp の `test-backend-ops` と同じ考え方）。op ごとに許容値を持つ | 必須 |
+| logits | 参照との KL ダイバージェンス（平均と 99 パーセンタイル）、top-1 の一致率、最大絶対誤差。llama.cpp の `llama-perplexity --kl-divergence-base / --kl-divergence` で測れる | 必須 |
+| 品質 | perplexity の差 | 必須 |
+| 健全性 | NaN / Inf がないこと、同じ語の繰り返しなどの崩壊がないこと | 必須 |
+| greedy の一致 | 生成トークンの一致率（何トークン目まで一致したか） | 補助。回帰を素早く見つける用途 |
+
+許容値は、良性の差を基準に校正します。具体的には、llama.cpp 公式のバックエンド同士の差（同じモデルを CPU と Vulkan（RX 6400）で動かしたときの KL ダイバージェンスなど）を測り、それを超えないことを条件にします。
+
+## バックエンド契約（P2 の前に固定する）
+
+runtime / ops とバックエンドの間の約束を、次の概念だけで定めます。ggml 固有の概念（`ggml_tensor`、`ggml_cgraph`、ggml の型番号など）は入れません。
+
+| 概念 | 決めること |
+| --- | --- |
+| Device | 列挙、能力（OpenCL のバージョン、warp / wave 幅、ローカルメモリ、単一確保の上限）、ドライバの癖のフラグ、調整値。デバイスデータベースから引く |
+| Buffer | 確保と解放、「バッファ + バイトオフセット」によるアドレス指定（サブバッファのアライン制約を避けるため）、ホストとの転送、公称上限を超える確保の扱い |
+| TensorDesc | 論理的な形・型・ストライド。ビュー、転置、ブロードキャスト。除算なしの添字計算に要る定数 |
+| PhysicalLayout | デバイス上の物理配置（自然配置、R32 など）。論理形とは別の、テンソルの属性として持つ |
+| Pack / Unpack | 論理配置と物理配置の相互変換。部分的な読み書きを含む。ホストとの転送時に runtime が呼ぶ |
+| Command / Stream | in-order の実行キュー、同期点、イベント、エラーの伝え方 |
+| Op | 入出力の形・型の約束、数値の許容誤差、CPU 参照実装 |
+| KernelVariant | 1 つの op の実装候補。適用条件（型、物理配置、形）と調整値を持ち、デバイスデータベースの情報で選ぶ |
+
+あわせて、次の点も決めます。
+
+- **融合の表し方**: CL11 には、グラフの文脈がないとできない最適化があります（V の転置コピーと行列積の融合、不要な `CONT` の省略）。これを失わないよう、隣り合う op の組を表す最小限の Graph / Plan を任意の拡張として持つか、融合した op を Op として定義します。
+- **エラーと同期**: 確保の遅延失敗（NVIDIA 390 で公称上限を超えたとき）など、非同期に現れる失敗をどこで報告するか。
 
 ## multi-GPU transport について
 
@@ -102,8 +136,9 @@ adapters  ──►  ops / quant  ──►  tensor
 | 段階 | 内容 | 完了条件 |
 | --- | --- | --- |
 | P0 | モノリシックな CL11 を ggml backend として完成させる。ツリー外プラグイン化。GPU 別の最適化（GT 710/730、WX 2100、RX 6400）を llama.cpp 側の worktree で実施中 | 済み・実施中 |
-| P1 | GPU 別の最適化を統合し、`adapters/ggml/` を CL11 の正本にする。性能の基準表を固定する | 全 GPU で test-backend-ops が全 PASS、生成が CPU と一致 |
-| P2 | runtime（device / buffer / stream / allocator、デバイスデータベース）と backends/opencl11 を切り出す。ggml adapter は runtime を呼ぶ形にする | P1 と同じ試験 + 性能が基準表の ±3% 以内 |
+| P1 | GPU 別の最適化を統合し、`adapters/ggml/` を CL11 の正本にする。性能の基準表と、正しさの許容値（公式バックエンド同士の差で校正）を固定する | 全 GPU で「正しさの基準」の必須項目を満たす |
+| P1.5 | バックエンド契約（8 概念 + 融合 + エラーと同期）を文書とヘッダで固定する | 契約の文書と C/C++ のヘッダ。CL11 の現在の機能がすべて表現できることを確認 |
+| P2 | runtime（device / buffer / stream / allocator、デバイスデータベース）と backends/opencl11 を、契約に沿って切り出す。ggml adapter は runtime を呼ぶ形にする | P1 と同じ試験 + 性能が基準表の ±3% 以内 |
 | P3 | tensor、ops、quant を切り出し、C API と CPU 参照の単体試験を作る。ggml adapter は翻訳層だけにする | 単体試験 + P2 と同じ回帰試験 |
 | P4 | multi-GPU transport（パイプライン分割）。異種 GPU にまたがって全層を GPU で動かす | 8B 級モデルを TB250 の複数 GPU で動かし、CPU との一致と速度を測る |
 | P5 | backends の追加（opencl12、vulkan、cuda）と adapters の追加（PyTorch extension、ONNX Runtime） | adapter ごとに試験を定める |

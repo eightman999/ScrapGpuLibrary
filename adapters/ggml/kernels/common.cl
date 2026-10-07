@@ -14,7 +14,7 @@
 // Tensor descriptor, passed by value. The layout (9 x int) must match struct cl11_td on the host.
 // ne: number of elements, nb: strides in bytes, off: byte offset of the first element in the cl_mem.
 // fm*/fl*: magic numbers to divide by ne0..ne3 without an integer division (see FDIV): the integer division
-// of the 32-bit integers is very slow on the old GPUs (about 100 instructions on Fermi).
+// of the 32-bit integers is very slow on the old GPUs (a long instruction sequence on Fermi).
 typedef struct {
     int ne0, ne1, ne2, ne3;
     int nb0, nb1, nb2, nb3;
