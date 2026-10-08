@@ -8,6 +8,9 @@ OpenCL 1.1 だけで動く ggml バックエンド「CL11」です（llama.cpp /
 | `kernels/*.cl` | OpenCL C 1.1 のカーネル（CMake が文字列として埋め込む） |
 | `include/ggml-cl11.h` | 公開ヘッダ |
 | `tools/attn_check.cpp` | attention（K / V キャッシュ）のグラフ単位の確認プログラム。`test-backend-ops` は融合したグラフを作らないため別に持つ（先頭のコメントにビルド方法） |
+| `tools/mvm_check.cpp` | 起動回数を減らす融合（複数の `MUL_MAT` を 1 回で、K / V キャッシュの `SET_ROWS` の組）のグラフ単位の確認プログラム（二重精度の参照との比較、先頭のコメントにビルド方法） |
+| `tools/mm_bench.cpp` | 1 つの `MUL_MAT`（型・m・n・k を指定）の GFLOPS を CSV で出す。`test-backend-ops perf` に無い n=128 を測る |
+| `tools/kepler-sweep/` | TB250 で GT 730 / GT 710 / GT 430 の test・greedy・mat-mat 候補・llama-bench を一括で測るスクリプト。GT 430 の denormal product（`dn_*` ステージ。test、mat-vec の GB/s、greedy、KL ダイバージェンス、llama-bench）と全 GPU の回帰確認（`regress` ステージ）も含む（`sweep.sh`、使い方は先頭のコメントと [docs/CL11.md](../../docs/CL11.md) の "Kepler round 3" / "Fermi round"。`DRY_RUN=1` でコマンドだけ出力） |
 | `CMakeLists.txt` | ツリー内（`ggml_add_backend_library`）とツリー外プラグインの 2 モード |
 | `llama.cpp/` | llama.cpp への組み込み（ツリー内パッチ、`install-in-tree.sh`、手順 README） |
 

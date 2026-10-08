@@ -181,6 +181,81 @@ float4 f4_h16(uint w) { return f4_mag(w & 0xF0F0F0F0u) - (float4)(8388608.0f); }
         xp += NWR * 64;                                                                               \
     }
 
+// Fermi variant (DN_Q4_K, "denormal products", see mul_mv_r.cl; src1 prepared by k_xprep with the pattern hbit = 8, the sums of x of the groups of 16
+// weights are at psp[]): nibbles masked in place are floats. One word (4 bytes = 4 low + 4 high nibbles) of the NRR rows: XA / XB = the
+// float4 of xs of the low / high nibbles.
+#define DNK_WORD(Q, W, XA, XB)                                                                        \
+    {                                                                                                 \
+        const float4 xl = XLO(XA), xh = XLO(XB);                                                      \
+        for (int j = 0; j < NRR; ++j) {                                                               \
+            const uint w = Q[j].W;                                                                    \
+            const uint t = w >> 24;                                                                   \
+            sl[j] = fma(as_float(w & 0x0000000Fu), xl.x, sl[j]);                                      \
+            sh[j] = fma(as_float(w & 0x000000F0u), xh.x, sh[j]);                                      \
+            sl[j] = fma(as_float(w & 0x00000F00u), xl.y, sl[j]);                                      \
+            sh[j] = fma(as_float(w & 0x0000F000u), xh.y, sh[j]);                                      \
+            sl[j] = fma(as_float(w & 0x000F0000u), xl.z, sl[j]);                                      \
+            sh[j] = fma(as_float(w & 0x00F00000u), xh.z, sh[j]);                                      \
+            sl[j] = fma(as_float(t & 0x0Fu), xl.w, sl[j]);                                            \
+            sh[j] = fma(as_float(t & 0xF0u), xh.w, sh[j]);                                            \
+        }                                                                                             \
+    }
+
+#define DNK_CHUNK(C, RS)                                                                              \
+    {                                                                                                 \
+        uint4 qa[NRR], qb[NRR];                                                                       \
+        float sl[NRR], sh[NRR];                                                                       \
+        for (int j = 0; j < NRR; ++j) {                                                               \
+            qa[j] = qp[j][(2 * (C)) * RS(j)];                                                         \
+            qb[j] = qp[j][(2 * (C) + 1) * RS(j)];                                                     \
+            sl[j] = 0.0f;                                                                             \
+            sh[j] = 0.0f;                                                                             \
+        }                                                                                             \
+        DNK_WORD(qa, x, 16 * (C) + 0, 16 * (C) + 8)  DNK_WORD(qa, y, 16 * (C) + 1, 16 * (C) + 9)      \
+        DNK_WORD(qa, z, 16 * (C) + 2, 16 * (C) + 10) DNK_WORD(qa, w, 16 * (C) + 3, 16 * (C) + 11)     \
+        DNK_WORD(qb, x, 16 * (C) + 4, 16 * (C) + 12) DNK_WORD(qb, y, 16 * (C) + 5, 16 * (C) + 13)     \
+        DNK_WORD(qb, z, 16 * (C) + 6, 16 * (C) + 14) DNK_WORD(qb, w, 16 * (C) + 7, 16 * (C) + 15)     \
+        const float sxl = psp[4 * (C)] + psp[4 * (C) + 1];                                            \
+        const float sxh = psp[4 * (C) + 2] + psp[4 * (C) + 3];                                        \
+        for (int j = 0; j < NRR; ++j) {                                                               \
+            tl[j] = fma(V4(scv[j], (2 * (C)) & 3), sl[j], tl[j]);                                      \
+            th[j] = fma(V4(scv[j], (2 * (C) + 1) & 3), sh[j], th[j]);                                  \
+            uu[j] = fma(V4(mnv[j], (2 * (C)) & 3), sxl, fma(V4(mnv[j], (2 * (C) + 1) & 3), sxh, uu[j])); \
+        }                                                                                             \
+    }
+
+#define MVK_Q4_DN_LOOP(RS)                                                                            \
+    for (int b = sp; b < nb; b += NWR) {                                                              \
+        uint4 hd[NRR];                                                                                \
+        float4 scv[NRR], mnv[NRR];                                                                    \
+        float tl[NRR], th[NRR], uu[NRR];                                                              \
+        for (int j = 0; j < NRR; ++j) {                                                               \
+            hd[j] = hp[j][0];                                                                         \
+            tl[j] = 0.0f;                                                                             \
+            th[j] = 0.0f;                                                                             \
+            uu[j] = 0.0f;                                                                             \
+            scv[j] = f4_mag(hd[j].y & 0x3F3F3F3Fu) - (float4)(8388608.0f);                            \
+            mnv[j] = f4_mag(hd[j].z & 0x3F3F3F3Fu) - (float4)(8388608.0f);                            \
+        }                                                                                             \
+        DNK_CHUNK(0, RS)                                                                              \
+        DNK_CHUNK(1, RS)                                                                              \
+        for (int j = 0; j < NRR; ++j) {                                                               \
+            scv[j] = f4_mag((hd[j].w & 0x0F0F0F0Fu) | ((hd[j].y >> 2) & 0x30303030u)) - (float4)(8388608.0f); \
+            mnv[j] = f4_mag(((hd[j].w >> 4) & 0x0F0F0F0Fu) | ((hd[j].z >> 2) & 0x30303030u)) - (float4)(8388608.0f); \
+        }                                                                                             \
+        DNK_CHUNK(2, RS)                                                                              \
+        DNK_CHUNK(3, RS)                                                                              \
+        for (int j = 0; j < NRR; ++j) {                                                               \
+            const float d    = vload_half(0, (global const half *)hp[j]);                            \
+            const float dmin = vload_half(1, (global const half *)hp[j]);                            \
+            acc[j] = fma(d * P2(149 - DN_E), tl[j] + th[j], fma(-dmin, uu[j], acc[j]));               \
+            qp[j] += NWR * 8 * RS(j);                                                                 \
+            hp[j] += NWR * RS(j);                                                                     \
+        }                                                                                             \
+        xp += NWR * 64;                                                                               \
+        psp += NWR * 16;                                                                              \
+    }
+
 // Q6_K: weights (qd, l) of a half h (0, 1) of the super-block: q = (nibble | field << 4) - 32, the nibble is the low (qd 0, 1) or
 // high (qd 2, 3) half of the ql byte (h * 64 + (qd & 1) * 32 + l), the field the bits 2 * qd of the qh byte (h * 32 + l).
 // A work-item handles 16 consecutive l (lh = 0, 1) of the 4 quadrants: pieces A = ql[h * 64 + 16 lh], A2 = ql[h * 64 + 32 + 16 lh],
@@ -246,6 +321,74 @@ float4 f4_h16(uint w) { return f4_mag(w & 0xF0F0F0F0u) - (float4)(8388608.0f); }
         xp += NWR * 64;                                                                               \
     }
 
+// Fermi variant (DN_Q6_K) of the Q6_K loop (pattern hbit = 0 of k_xprep: every byte i of a word has the scale 2^(DN_E - 8 i), byte 3 is shifted): the
+// 6-bit values (q = nibble | field << 4, one per byte) are combined as before, then each byte is masked in place (the float q * 2^(8 i - 149))
+// and multiplied by xs; the offset 32 is removed with the sum of x of the 16 weights of a scale (psp[group], group = scale index).
+#define DNQ6_WORD(VF, W, XI)                                                                          \
+    {                                                                                                 \
+        const float4 xs = XLO(XI);                                                                    \
+        for (int j = 0; j < NRR; ++j) {                                                               \
+            const uint c = VF(W);                                                                     \
+            sg[j] = fma(as_float(c & 0x000000FFu), xs.x, sg[j]);                                      \
+            sg[j] = fma(as_float(c & 0x0000FF00u), xs.y, sg[j]);                                      \
+            sg[j] = fma(as_float(c & 0x00FF0000u), xs.z, sg[j]);                                      \
+            sg[j] = fma(as_float(c >> 24), xs.w, sg[j]);                                              \
+        }                                                                                             \
+    }
+
+#define DNQ6_GROUP(H, LH, QD, VF)                                                                     \
+    {                                                                                                 \
+        const int xo = (H) * 32 + (QD) * 8 + 4 * (LH);                                                \
+        const int si = (H) * 8 + (LH) + 2 * (QD);                                                     \
+        for (int j = 0; j < NRR; ++j) {                                                               \
+            sg[j] = 0.0f;                                                                             \
+        }                                                                                             \
+        DNQ6_WORD(VF, x, xo + 0) DNQ6_WORD(VF, y, xo + 1) DNQ6_WORD(VF, z, xo + 2) DNQ6_WORD(VF, w, xo + 3) \
+        const float sx = psp[si];                                                                     \
+        for (int j = 0; j < NRR; ++j) {                                                               \
+            const uint sw = (si >> 2) == 0 ? hw[j].x : (si >> 2) == 1 ? hw[j].y : (si >> 2) == 2 ? hw[j].z : hw[j].w; \
+            const float sc = V4(f4_u8(sw), (si & 3));                                                   \
+            tt[j] = fma(sc, fma(-P2(DN_E - 144), sx, sg[j]), tt[j]);                                   \
+        }                                                                                             \
+    }
+
+#define DNQ6_PIECE(H, LH, RS)                                                                         \
+    {                                                                                                 \
+        uint4 pa_[NRR], pb_[NRR], pc_[NRR];                                                           \
+        for (int j = 0; j < NRR; ++j) {                                                               \
+            pa_[j] = qp[j][(4 * (H) + (LH)) * RS(j)];                                                 \
+            pb_[j] = qp[j][(4 * (H) + 2 + (LH)) * RS(j)];                                             \
+            pc_[j] = qp[j][(8 + 2 * (H) + (LH)) * RS(j)];                                             \
+        }                                                                                             \
+        DNQ6_GROUP(H, LH, 0, V6_0)                                                                    \
+        DNQ6_GROUP(H, LH, 1, V6_1)                                                                    \
+        DNQ6_GROUP(H, LH, 2, V6_2)                                                                    \
+        DNQ6_GROUP(H, LH, 3, V6_3)                                                                    \
+    }
+
+#define MVK_Q6_DN_LOOP(RS)                                                                            \
+    for (int b = sp; b < nb; b += NWR) {                                                              \
+        float tt[NRR], sg[NRR];                                                                       \
+        uint4 hw[NRR];                                                                                \
+        for (int j = 0; j < NRR; ++j) {                                                               \
+            hw[j] = hp[j][0];                                                                         \
+            tt[j] = 0.0f;                                                                             \
+        }                                                                                             \
+        DNQ6_PIECE(0, 0, RS)                                                                          \
+        DNQ6_PIECE(0, 1, RS)                                                                          \
+        DNQ6_PIECE(1, 0, RS)                                                                          \
+        DNQ6_PIECE(1, 1, RS)                                                                          \
+        for (int j = 0; j < NRR; ++j) {                                                               \
+            const float d = vload_half(0, (global const half *)dp[j]);                                \
+            acc[j] = fma(d * P2(149 - DN_E), tt[j], acc[j]);                                          \
+            qp[j] += NWR * 12 * RS(j);                                                                \
+            hp[j] += NWR * RS(j);                                                                     \
+            dp[j] += NWR * 2 * RS(j);                                                                 \
+        }                                                                                             \
+        xp += NWR * 64;                                                                               \
+        psp += NWR * 16;                                                                              \
+    }
+
 #if !defined(CL11_NO_K) && !defined(CL11_ONLY_MM)
 #define WG_MVR WG_MVR_Q4_K
 #define XLDG   LDG_Q4_K
@@ -260,11 +403,20 @@ kernel void k_mvr_q4_k(MVR_ARGS_G) {
 
 #undef XLO
 #define XLO XLO_C
+#if defined(DN_Q4_K) && DN_Q4_K
+kernel void k_mvrc_q4_k(MVR_ARGS_C) {
+    MVK_BEGIN(8, constant, MVR_XC)
+    constant const float * psp = (constant const float *)px + ta.ne0 + sp * 16;
+    if (full) { MVK_Q4_DN_LOOP(RS_FULL) } else { MVK_Q4_DN_LOOP(RS_VAR) }
+    MVR_END
+}
+#else
 kernel void k_mvrc_q4_k(MVR_ARGS_C) {
     MVK_BEGIN(8, constant, MVR_XC)
     if (full) { MVK_Q4_LOOP(RS_FULL) } else { MVK_Q4_LOOP(RS_VAR) }
     MVR_END
 }
+#endif
 #undef XLO
 #undef XLDG
 #undef NWR
@@ -284,11 +436,20 @@ kernel void k_mvr_q6_k(MVR_ARGS_G) {
 
 #undef XLO
 #define XLO XLO_C
+#if defined(DN_Q6_K) && DN_Q6_K
+kernel void k_mvrc_q6_k(MVR_ARGS_C) {
+    MVK_BEGIN(12, constant, MVR_XC)
+    constant const float * psp = (constant const float *)px + ta.ne0 + sp * 16;
+    if (full) { MVK_Q6_DN_LOOP(RS_FULL) } else { MVK_Q6_DN_LOOP(RS_VAR) }
+    MVR_END
+}
+#else
 kernel void k_mvrc_q6_k(MVR_ARGS_C) {
     MVK_BEGIN(12, constant, MVR_XC)
     if (full) { MVK_Q6_LOOP(RS_FULL) } else { MVK_Q6_LOOP(RS_VAR) }
     MVR_END
 }
+#endif
 #undef XLO
 #undef XLDG
 #undef NWR

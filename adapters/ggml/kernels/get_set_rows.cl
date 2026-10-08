@@ -56,4 +56,35 @@ DEF_SET_ROWS(k_set_rows_f32_f32, LD_F32, ST_F32)
 DEF_SET_ROWS(k_set_rows_f32_f16, LD_F32, ST_F16)
 DEF_SET_ROWS(k_set_rows_f16_f32, LD_F16, ST_F32)
 DEF_SET_ROWS(k_set_rows_f16_f16, LD_F16, ST_F16)
+
+// Two SET_ROWS (the K and the V cache of an attention layer) in one launch: the first `groups_a` groups do the first, the others the second.
+// Both have the same types of src0 and dst.
+#define SET_ROWS_ONE(LD, ST, p0, t0, p1, t1, pd, td, n, idx64, grp)                                     \
+    {                                                                                                   \
+        const int g = (grp) * WG_EW + (int)get_local_id(0);                                             \
+        if (g < (n)) {                                                                                  \
+            int i00, i01, i02, i03;                                                                     \
+            SPLIT4(g, t0, i00, i01, i02, i03);                                                          \
+            global const uchar * pi = (p1) + (t1).off + i01 * (t1).nb0 + FMOD(i02, t1, 1) * (t1).nb1 + FMOD(i03, t1, 2) * (t1).nb2; \
+            const int row = (idx64) ? (int)(*(global const long *)pi) : *(global const int *)pi;        \
+            const float v = LD((p0) + OFF4(t0, i00, i01, i02, i03));                                    \
+            ST((pd) + OFF4(td, i00, row, i02, i03), v);                                                 \
+        }                                                                                               \
+    }
+#define DEF_SET_ROWS2(NAME, LD, ST)                                                                     \
+kernel void NAME(global uchar * p0a, tdesc t0a, global uchar * p1a, tdesc t1a, global uchar * pda, tdesc tda, int na, int idx64a, \
+                 global uchar * p0b, tdesc t0b, global uchar * p1b, tdesc t1b, global uchar * pdb, tdesc tdb, int nb_, int idx64b, \
+                 int groups_a) {                                                                        \
+    const int grp = LGID();                                                                             \
+    if (grp < groups_a) {                                                                               \
+        SET_ROWS_ONE(LD, ST, p0a, t0a, p1a, t1a, pda, tda, na, idx64a, grp)                             \
+    } else {                                                                                            \
+        SET_ROWS_ONE(LD, ST, p0b, t0b, p1b, t1b, pdb, tdb, nb_, idx64b, grp - groups_a)                 \
+    }                                                                                                   \
+}
+
+DEF_SET_ROWS2(k_set_rows2_f32_f32, LD_F32, ST_F32)
+DEF_SET_ROWS2(k_set_rows2_f32_f16, LD_F32, ST_F16)
+DEF_SET_ROWS2(k_set_rows2_f16_f32, LD_F16, ST_F32)
+DEF_SET_ROWS2(k_set_rows2_f16_f16, LD_F16, ST_F16)
 #endif // CL11_NO_BASE
