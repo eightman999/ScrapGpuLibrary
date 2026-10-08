@@ -47,9 +47,9 @@ Qwen3-0.6B Q8_0、`-ngl 99 -ub 128 -b 128 -p 128 -n 64`。CPU はこのマシン
 
 | GPU | 推奨 | 根拠 |
 | --- | --- | --- |
-| GeForce GT 430 | CL11 | 公式のバックエンドは動かない。CL11 は pp128 89.3 / tg64 22.3 t/s（CPU の tg は 15.6） |
-| GeForce GT 730 | CL11 | 公式の CUDA / Vulkan は使えない。CL11 は pp128 215.7 / tg64 33.6 t/s（CPU の tg は 15.9）。Q4_K_M は 208.2 / 35.3 |
-| GeForce GT 710 | CL11（Q4_K 系のモデルで） | CL11 は Q8_0 で pp128 110.5 / tg64 14.6 t/s。帯域が 11.7 GB/s なので、Q8_0 の生成は CPU（15.7）より遅い。Q4_K_M は 107.6 / 16.7（CPU の tg は 4.6）で、Qwen3-1.7B Q4_K_M も 29 層すべてをオフロードできる（7.5 t/s、CPU は 1.6） |
+| GeForce GT 430 | CL11 | 公式のバックエンドは動かない。CL11 は pp128 89.4 / tg64 22.3 t/s（CPU の tg は 15.6）。Q4_K_M は 89.9 / 23.7、Q4_0 のモデル（Qwen2-0.5B-ft）は 118.5 / 36.5（CPU は 47.5 / 25.8） |
+| GeForce GT 730 | CL11 | 公式の CUDA / Vulkan は使えない。CL11 は pp128 241.9 / tg64 34.9 t/s（CPU の tg は 15.9）。Q4_K_M は 231.6 / 39.2 |
+| GeForce GT 710 | CL11（Q4_K 系のモデルで） | CL11 は Q8_0 で pp128 120.0 / tg64 14.7 t/s。帯域が 11.7 GB/s なので、Q8_0 の生成は CPU（15.7）より遅い。Q4_K_M は 115.6 / 17.8（CPU の tg は 4.6）で、Qwen3-1.7B Q4_K_M も 29 層すべてをオフロードできる（7.5 t/s、CPU は 1.6） |
 | Radeon Pro WX 2100 | 公式 Vulkan（既定の設定） | Qwen3-0.6B Q8_0 で Vulkan は pp128 559 / tg64 46.2 t/s、0.46 J/token。CL11 は Clover で 318 / 20.1 t/s、0.72 J/token（rusticl は pp 446 / tg 14.0）。Vulkan の設定を変えても差は 1% 未満 |
 | Radeon RX 6400 | 公式 Vulkan（既定の設定） | Qwen3-0.6B Q8_0 で Vulkan は pp128 2455 / tg64 139.5 t/s、0.24 J/token。CL11（rusticl）は 854 / 20.3 t/s、0.45 J/token。Vulkan の設定を変えても既定を上回らなかった。CL11 は RDNA 向けの調整をしておらず、AMD 全般の設定（`mad`、公称上限の厳守、K-quant の mat-vec の形など）だけを有効にしている |
 
