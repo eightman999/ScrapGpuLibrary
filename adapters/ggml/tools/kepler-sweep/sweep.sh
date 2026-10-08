@@ -78,12 +78,21 @@ REF_Q8=${REF_Q8:-/tmp/cl11_out_none.txt}
 MM_VARIANTS=${MM_VARIANTS:-"base x84 x84p x88 x88w x88s x88k x88d x164 x168 x168s x168w x88g x88,ku=4 x88,maxrreg=128 x88,maxrreg=168 x168,maxrreg=168 x88w,pf=2"}
 TEST_VARIANTS=${TEST_VARIANTS:-$(for v in $MM_VARIANTS; do [ "$v" = base ] || printf '%s ' "$v"; done)}
 GREEDY_VARIANTS=${GREEDY_VARIANTS:-"x88 x164 x168 x88k x88d"}
-MODEL_Q8=${MODEL_Q8:-$(ls "$HOME"/bench/*/Qwen3-0.6B-Q8_0.gguf "$HOME"/models/Qwen3-0.6B-Q8_0.gguf 2>/dev/null | head -1)}
-MODEL_Q4K=${MODEL_Q4K:-$(ls "$HOME"/bench/*/Qwen3-0.6B-Q4_K_M.gguf "$HOME"/models/Qwen3-0.6B-Q4_K_M.gguf 2>/dev/null | head -1)}
-MODEL_Q40=${MODEL_Q40:-$(ls "$HOME"/bench/*/Qwen2-0.5B-ft-Q4_0.gguf "$HOME"/bench/*/Qwen3-0.6B-Q4_0.gguf "$HOME"/models/Qwen3-0.6B-Q4_0.gguf 2>/dev/null | head -1)}
+# the models: pass the files explicitly (MODEL_Q8, MODEL_Q4K, MODEL_Q40); the search below only finds the usual names, in any letter case
+find_model() { local pat; for pat in "$@"; do find "$HOME/bench" "$HOME/models" -maxdepth 2 -iname "$pat" 2>/dev/null | head -1; done | head -1; }
+MODEL_Q8=${MODEL_Q8:-$(find_model 'Qwen3-0.6B-Q8_0.gguf')}
+MODEL_Q4K=${MODEL_Q4K:-$(find_model 'Qwen3-0.6B-Q4_K_M.gguf' 'Qwen3-0.6B-Base-Q4_K_M.gguf')}
+MODEL_Q40=${MODEL_Q40:-$(find_model 'Qwen3-0.6B-Q4_0.gguf' '*-Q4_0.gguf')}
 PROMPT="The capital of France is Paris. The capital of Japan is"
 if [ "$DRY_RUN" = 1 ]; then # the commands are printed, the files need not exist
     MODEL_Q8=${MODEL_Q8:-"~/bench/models/Qwen3-0.6B-Q8_0.gguf"}; MODEL_Q4K=${MODEL_Q4K:-"~/bench/models/Qwen3-0.6B-Q4_K_M.gguf"}; MODEL_Q40=${MODEL_Q40:-"~/bench/models/Qwen2-0.5B-ft-Q4_0.gguf"}
+else # a stage without its model would silently produce empty rows (it happened): stop here unless ALLOW_MISSING_MODELS=1
+    for mv in MODEL_Q8 MODEL_Q4K MODEL_Q40; do
+        if [ ! -s "${!mv}" ] && [ "${ALLOW_MISSING_MODELS:-0}" != 1 ]; then
+            echo "sweep.sh: $mv is not set or not a file ('${!mv}'); pass the model files (MODEL_Q8, MODEL_Q4K, MODEL_Q40) or set ALLOW_MISSING_MODELS=1" >&2
+            exit 1
+        fi
+    done
 fi
 
 # the shapes of the mat-mat sweep: the matrices of Qwen3-0.6B with a 128-column prompt batch, and the suite of test-backend-ops perf (m=4096, k=14336, n=512)
@@ -100,6 +109,7 @@ log() { echo "[sweep $(date +%H:%M:%S)] $*" >&2; }
 has_stage() { case " $STAGES " in *" $1 "*) return 0;; esac; return 1; }
 safe() { echo "$1" | tr -c 'A-Za-z0-9._\n-' '_'; }
 csv_header() { [ -s "$1" ] || echo "$2" > "$1"; }
+csvq() { local v=${1//\"/\"\"}; printf '"%s"' "$v"; }   # a CSV field that may contain commas (variant names such as "x88,ku=4")
 
 # run a command on one GPU: lock, cool down, GGML_CL11_DEVICES. usage: run_gpu <gpu> <env assignments (a string)> <command...>
 run_gpu() {
@@ -171,7 +181,7 @@ stage_build() {
 test_row() { # gpu config log
     local pt
     pt=$("$HERE/summarize.py" test "$3")
-    echo "$1,$2,${pt% *},${pt#* }" >> "$OUT/test.csv"
+    echo "$1,$(csvq "$2"),${pt% *},${pt#* }" >> "$OUT/test.csv"
     log "test $1 $2: ${pt% *}/${pt#* }"
 }
 
@@ -216,7 +226,7 @@ greedy_run() { # gpu model_path model_label config ref
     if [ "$ref" = /dev/null ]; then same=reference; elif [ -s "$ref" ] && cmp -s "$o" "$ref"; then same=yes; fi
     [ "$DRY_RUN" = 1 ] && same="(dry run)"
     GREEDY_LAST=$same
-    echo "$gpu,$label,$cfg,$same,$("$HERE/summarize.py" kernels "$e")" >> "$OUT/greedy.csv"
+    echo "$gpu,$label,$(csvq "$cfg"),$same,$("$HERE/summarize.py" kernels "$e")" >> "$OUT/greedy.csv"
     log "greedy $gpu $label $cfg: identical=$same"
 }
 
@@ -259,7 +269,7 @@ stage_mm() {
             local lf="$OUT/logs/mm_${g}_$(safe "$v").csv"
             run_gpu "$gpu" "$(cfg_env "mm:$v" "$gpu")" "$BIN/mm_bench" "${jobs[@]}" > "$lf" 2> "$lf.err"
             while IFS=, read -r ty m n k iters ms gf; do
-                [ -n "$gf" ] && echo "$gpu,$v,$ty,$m,$n,$k,$iters,$ms,$gf" >> "$OUT/mm.csv"
+                [ -n "$gf" ] && echo "$gpu,$(csvq "$v"),$ty,$m,$n,$k,$iters,$ms,$gf" >> "$OUT/mm.csv"
             done < "$lf"
             log "mm $gpu $v: $(wc -l < "$lf") results"
             # the official perf suite (n=512 only)
@@ -279,7 +289,7 @@ bench_run() { # gpu model_path label config plugin
     PLUGIN_USED="$plugin" run_gpu "$gpu" "$(cfg_env "${cfg%%@*}" "$gpu")" "$LLAMA_BIN/llama-bench" $(devargs_for "$gpu") -m "$model" -ngl 99 -ub 128 -b 128 -p 128 -n 64 -r "$BENCH_REPS" -t 2 -o csv > "$csvf" 2> "$csvf.err"
     local r; r=$("$HERE/summarize.py" bench "$csvf")
     BENCH_PP=${r% *}; BENCH_TG=${r#* }
-    echo "$gpu,$label,$cfg,${r% *},${r#* }" >> "$OUT/bench.csv"
+    echo "$gpu,$label,$(csvq "$cfg"),${r% *},${r#* }" >> "$OUT/bench.csv"
     log "bench $gpu $label $cfg: pp128 ${r% *} tg64 ${r#* }"
 }
 

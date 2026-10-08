@@ -38,7 +38,8 @@ def cmd_perf(path, gpu, variant):
         if not m:
             continue
         scale = {"K": 1e-6, "M": 1e-3, "G": 1.0, "T": 1e3}[m.group(6)]
-        print(f"{gpu},{variant},{m.group(1)},{m.group(2)},{m.group(3)},{m.group(4)},{float(m.group(5)) * scale:.1f}")
+        q = '"' + variant.replace('"', '""') + '"'   # variant names may contain commas ("x88,ku=4")
+        print(f"{gpu},{q},{m.group(1)},{m.group(2)},{m.group(3)},{m.group(4)},{float(m.group(5)) * scale:.1f}")
 
 
 def cmd_bench(path):
@@ -224,7 +225,7 @@ def cmd_summary(d):
             md += [f"### {gpu}", "", table(body, ["config"] + [f"{t} m{m} k{k}" for t, m, k in cols]), ""]
     kl = read_mm(os.path.join(d, "kl.csv"))
     if kl:
-        md += ["## KL divergence against the CPU (llama-perplexity -c 512 --chunks 8; tolerance: mean <= 0.0070, 99% <= 0.033, Same top p >= 95.0%)", "",
+        md += ["## KL divergence against the CPU (llama-perplexity -c 512 --chunks 8; tolerance KL_MEAN_MAX / KL_P99_MAX / KL_TOP_MIN = %s / %s / %s%%. The tolerance depends on the model and the text: calibrate it with an official backend on the same model and text, e.g. Vulkan on the RX 6400)" % (os.environ.get("KL_MEAN_MAX", "0.0070"), os.environ.get("KL_P99_MAX", "0.033"), os.environ.get("KL_TOP_MIN", "95.0")), "",
                table([[r["gpu"], r["model"], r["config"], r["ppl"], r["mean_kld"], r["kld99"], r["kld999"], r["max_dp"], r["same_top_p"], r["verdict"]] for r in kl],
                      ["GPU", "model", "config", "PPL", "mean KLD", "99% KLD", "99.9% KLD", "max dp %", "Same top p %", "result"]), ""]
 

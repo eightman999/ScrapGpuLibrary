@@ -795,8 +795,8 @@ static cl11_tuning cl11_tuning_for(const cl11_device_info & info) {
             t.cfg.mvr_nrr[k] = 1;
         }
         t.cfg.mvr_dn[CL11_RK_Q4_0] = 1;  // the nibbles as denormal floats (FFMA of Fermi handles denormals at full speed): 1 AND + 1 FFMA per weight instead of a PRMT (a 16-per-clock instruction on Fermi) + FSUB + FFMA
-        t.cfg.mvr_dn[CL11_RK_Q4_K] = 1;
-        t.cfg.mvr_dn[CL11_RK_Q6_K] = 1;
+        t.cfg.mvr_dn[CL11_RK_Q4_K] = 1;  // GT 430, m4096 k14336: Q4_0 12.5 -> 17.4 GB/s, Q4_K 10.3 -> 12.5; tg Q4_0 model 30.0 -> 36.5, Q4_K_M 21.2 -> 23.2 t/s
+        // Q6_K: no DN (14.4 -> 14.0 GB/s at m4096 k14336, 11.6 -> 10.8 at m3072 k1024: the extra instructions of the 6-bit unpacking are not paid back)
         t.mvs_min_k    = 256;
         t.mvs_family   = 0;
         t.mvr_const_x  = true;   // Fermi: +15% (Q8_0) .. +30% (Q4_0), the x loads of 2 rows compete with the weights for the load units
@@ -819,9 +819,11 @@ static cl11_tuning cl11_tuning_for(const cl11_device_info & info) {
         t.cfg.wg_mvr[CL11_RK_Q6_K] = 64;
         t.cfg.mvr_ldg[CL11_RK_Q4_K] = 1;
         t.cfg.mvr_ldg[CL11_RK_Q6_K] = 1;
-        t.fuse_set_rows = true;  // the K and V cache writes of a layer in one launch (28 launches less per token of Qwen3-0.6B). Not measured on the GPU yet
-        t.multi_mv = true;       // Q / K / V and FFN gate / up in one launch each: ~3 launches less per layer (the GT 710 pays ~12 us for every kernel). Not measured on the GPU yet
-        // t.mmx_variant: the parameterized mat-mat kernels (mul_mm_x.cl) are candidates, k_mm_* stays until a variant has been measured on a GT 730 / GT 710 (docs/CL11.md, tools/kepler-sweep)
+        t.fuse_set_rows = true;  // the K and V cache writes of a layer in one launch (28 launches less per token of Qwen3-0.6B)
+        t.multi_mv = true;       // Q / K / V and FFN gate / up in one launch each (decode launches of Qwen3-0.6B 564 -> 452 with both fusions):
+                                 //   tg GT 730 Q8_0 33.6 -> 34.9, Q4_K_M 35.4 -> 39.2; GT 710 Q8_0 14.6 -> 14.7, Q4_K_M 16.7 -> 17.8 t/s
+        t.mmx_variant = "x84";   // mat-mat k_mmx_* (mul_mm_x.cl) with the 8 x 4 / 64 x 64 / BK 16 tile: pp128 GT 730 Q8_0 215.8 -> 241.9, Q4_K_M 208.0 -> 231.5;
+                                 //   GT 710 110.7 -> 120.5, 107.9 -> 116.4 t/s. The larger register tiles (8 x 8, 16 x 4, 16 x 8) were all slower (tools/kepler-sweep)
         t.cfg.nv_maxrreg = 128;  // Q4_K 56% -> 67%, Q6_K 74% -> 75% of the streaming rate on a GT 730; Q4_0 / Q8_0 get slower with the cap (hence the second program)
     }
     // AMD (Mesa rusticl / Clover, or the AMD drivers). The generation decides what is applied, see cl11_amd_generation():
