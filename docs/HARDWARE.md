@@ -53,7 +53,13 @@ Qwen3-0.6B Q8_0、`-ngl 99 -ub 128 -b 128 -p 128 -n 64`。CPU はこのマシン
 | Radeon Pro WX 2100 | 公式 Vulkan（既定の設定） | Qwen3-0.6B Q8_0 で Vulkan は pp128 559 / tg64 46.2 t/s、0.46 J/token。CL11 は Clover で 318 / 20.1 t/s、0.72 J/token（rusticl は pp 446 / tg 14.0）。Vulkan の設定を変えても差は 1% 未満 |
 | Radeon RX 6400 | 公式 Vulkan（既定の設定） | Qwen3-0.6B Q8_0 で Vulkan は pp128 2455 / tg64 139.5 t/s、0.24 J/token。CL11（rusticl）は 854 / 20.3 t/s、0.45 J/token。Vulkan の設定を変えても既定を上回らなかった。CL11 は RDNA 向けの調整をしておらず、AMD 全般の設定（`mad`、公称上限の厳守、K-quant の mat-vec の形など）だけを有効にしている |
 
-Vulkan の詳しい内訳（上限比、1 トークンの時間の内訳、GPU 側のサンプリング `-bs`、量子化形式、2 枚の協調）は [VULKAN_AMD.md](VULKAN_AMD.md) にあります。要点: tg は帯域の上限の 5〜7 割（小さいモデルほど低い。固定費が 1 トークンあたり 2〜3 ms）、サンプリングを GPU で行う `-bs` で実用の tg が RX 6400 で約 +7%、WX 2100 で約 +10%、1 枚に載らないモデルは `-sm layer`（`-sm row` は Vulkan で使えず、`-sm tensor` は 0.3 t/s）。
+Vulkan の上限比・内訳・手段ごとの実測は [VULKAN_AMD.md](VULKAN_AMD.md) にあります。要点:
+
+- tg は帯域の上限の 5〜7 割（RX 6400 で 55〜77%、WX 2100 で 49〜73%）。小さいモデルほど低く、重みの量に比例しない固定費（RX 6400 で 1 トークンあたり約 2〜2.6 ms、WX 2100 で 5〜8 ms）が効く。
+- 実用の tg を上げる手段: サンプリングを GPU で行う `-bs`（`--backend-sampling`、b11384 にある）で RX 6400 は +4〜12%、WX 2100 は +5〜10%。形式は Q4_K_M で Q8_0 比 +28〜30%（Qwen3-0.6B-Base。品質重視なら Q6_K / Q5_K_M で +17〜20%）。Q3 以下は Q4 より遅く、品質も大きく落ちる。
+- 合計スループットはバッチ処理（B=4 まで線形、RX 6400 は B=16、WX 2100 は B=8 が谷、`-c` は必要な分に絞る）。
+- 1 枚に載らないモデルは `-dev Vulkan0/Vulkan1 -sm layer -ts N/1`（8B Q4_K_M の微調整モデルで 14.1 t/s）。`-sm row` は Vulkan で使えず、`-sm tensor` は PCIe のレイテンシで遅い。WX 2100 をドラフトにする投機的デコードは遅くなる。
+- `GGML_VK_*` の設定は既定を上回らなかった（1.7B Q4_K_M の `GGML_VK_DISABLE_MMVQ=1` が +2.5% のみ）。
 
 J/token は hwmon の `power1_average`（GPU 単体）による。RX 6400 のアイドル電力は約 1.04 W。WX 2100 は `power1_input` で測り、アイドル電力は約 3.22 W。Clover は WX 2100（Polaris）では動き、RX 6400（RDNA2）ではハングする。
 
