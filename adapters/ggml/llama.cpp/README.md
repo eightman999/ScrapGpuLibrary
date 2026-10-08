@@ -49,11 +49,13 @@ sudo apt install build-essential git ocl-icd-opencl-dev opencl-headers   # cmake
 export PATH=~/bench/cmake-venv/bin:$PATH
 
 git clone https://github.com/ggml-org/llama.cpp && git -C llama.cpp checkout 0faee50
-cmake -S llama.cpp -B llama.cpp/build-dl -DGGML_BACKEND_DL=ON -DBUILD_SHARED_LIBS=ON \
-  -DGGML_NATIVE=ON -DLLAMA_CURL=OFF -DCMAKE_BUILD_TYPE=Release
-cmake --build llama.cpp/build-dl -j2 --target llama-cli llama-bench llama-completion test-backend-ops
+# GGML_NATIVE=ON と GGML_BACKEND_DL=ON は併用できない（cmake のエラー）。ホストの命令セットを明示する（TB250 の Celeron G3930 は SSE4.2、AVX なし）
+cmake -S llama.cpp -B llama.cpp/build-dl -G Ninja -DGGML_BACKEND_DL=ON -DBUILD_SHARED_LIBS=ON \
+  -DGGML_NATIVE=OFF -DGGML_SSE42=ON -DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_FMA=OFF -DGGML_F16C=OFF -DGGML_BMI2=OFF \
+  -DLLAMA_CURL=OFF -DLLAMA_OPENSSL=OFF -DCMAKE_BUILD_TYPE=Release
+cmake --build llama.cpp/build-dl -j2 --target llama-cli llama-bench llama-completion llama-perplexity test-backend-ops
 
-cmake -S adapters/ggml -B build-cl11 \
+cmake -S adapters/ggml -B build-cl11 -G Ninja \
   -DLLAMA_CPP_SOURCE_DIR=$PWD/llama.cpp -DLLAMA_CPP_BUILD_DIR=$PWD/llama.cpp/build-dl
 cmake --build build-cl11 -j2
 

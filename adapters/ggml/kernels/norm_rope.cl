@@ -1,3 +1,4 @@
+#ifndef CL11_NO_BASE
 // CL11 backend: RMS_NORM, SOFT_MAX and ROPE.
 
 // ---------------------------------------------------------------------------------------------
@@ -32,6 +33,73 @@ kernel void k_rms_norm(global uchar * ps, tdesc ts, global uchar * pd, tdesc td,
     const float scale = 1.0f / sqrt(sh[0] / (float)ts.ne0 + eps);
     for (int i = lid; i < ts.ne0; i += WG_ROW) {
         y[i] = x[i] * scale;
+    }
+}
+
+// RMS_NORM followed by a MUL with a weight vector (the whole row of the norm, ne0 contiguous floats): one kernel instead of two.
+kernel void k_rms_norm_mul(global uchar * ps, tdesc ts, global uchar * pw, tdesc tw, global uchar * pd, tdesc td, float eps) {
+    local float sh[WG_ROW];
+
+    const int lid = (int)get_local_id(0);
+    const int row = LGID();
+    const int nrows = ts.ne1 * ts.ne2 * ts.ne3;
+    if (row >= nrows) return; // uniform for the whole group
+
+    int i1, i2, i3;
+    { int q = FDIV(row, ts, 1); i1 = row - q * ts.ne1; i3 = FDIV(q, ts, 2); i2 = q - i3 * ts.ne2; }
+
+    global const float * x = (global const float *)(ps + OFF4(ts, 0, i1, i2, i3));
+    global const float * w = (global const float *)(pw + tw.off);
+    global       float * y = (global       float *)(pd + OFF4(td, 0, i1, i2, i3));
+
+    float sum = 0.0f;
+    for (int i = lid; i < ts.ne0; i += WG_ROW) {
+        sum += x[i] * x[i];
+    }
+    sh[lid] = sum;
+    barrier(CLK_LOCAL_MEM_FENCE);
+    for (int s = WG_ROW / 2; s > 0; s >>= 1) {
+        if (lid < s) {
+            sh[lid] += sh[lid + s];
+        }
+        barrier(CLK_LOCAL_MEM_FENCE);
+    }
+    const float scale = 1.0f / sqrt(sh[0] / (float)ts.ne0 + eps);
+    for (int i = lid; i < ts.ne0; i += WG_ROW) {
+        y[i] = (x[i] * scale) * w[i];
+    }
+}
+
+// ADD (a + b, F32, same shape, one row) followed by RMS_NORM and a MUL with a weight vector: sum = a + b is written too (it has other
+// users), dst = rms_norm(sum) * w. One work-group.
+kernel void k_add_rms_norm_mul(global uchar * pa, tdesc ta, global uchar * pb, tdesc tb, global uchar * pw, tdesc tw,
+                               global uchar * ps, tdesc ts, global uchar * pd, tdesc td, float eps) {
+    local float sh[WG_ROW];
+
+    const int lid = (int)get_local_id(0);
+    global const float * x = (global const float *)(pa + ta.off);
+    global const float * z = (global const float *)(pb + tb.off);
+    global const float * w = (global const float *)(pw + tw.off);
+    global       float * s = (global       float *)(ps + ts.off);
+    global       float * y = (global       float *)(pd + td.off);
+
+    float sum = 0.0f;
+    for (int i = lid; i < ta.ne0; i += WG_ROW) {
+        const float v = x[i] + z[i];
+        s[i] = v;
+        sum += v * v;
+    }
+    sh[lid] = sum;
+    barrier(CLK_LOCAL_MEM_FENCE);
+    for (int t = WG_ROW / 2; t > 0; t >>= 1) {
+        if (lid < t) {
+            sh[lid] += sh[lid + t];
+        }
+        barrier(CLK_LOCAL_MEM_FENCE);
+    }
+    const float scale = 1.0f / sqrt(sh[0] / (float)ta.ne0 + eps);
+    for (int i = lid; i < ta.ne0; i += WG_ROW) {
+        y[i] = (s[i] * scale) * w[i];   // s[i] was written by this work-item (same index): no barrier needed
     }
 }
 
@@ -160,3 +228,4 @@ kernel void NAME(global uchar * ps, tdesc ts, global uchar * pp, tdesc tp, globa
 
 DEF_ROPE(k_rope_f32, LD_F32, ST_F32, 4)
 DEF_ROPE(k_rope_f16, LD_F16, ST_F16, 2)
+#endif // CL11_NO_BASE

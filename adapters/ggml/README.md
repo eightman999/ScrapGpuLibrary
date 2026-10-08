@@ -7,6 +7,7 @@ OpenCL 1.1 だけで動く ggml バックエンド「CL11」です（llama.cpp /
 | `ggml-cl11.cpp` | バックエンド本体（`GGML_BACKEND_DL_IMPL(ggml_backend_cl11_reg)` を含む） |
 | `kernels/*.cl` | OpenCL C 1.1 のカーネル（CMake が文字列として埋め込む） |
 | `include/ggml-cl11.h` | 公開ヘッダ |
+| `tools/attn_check.cpp` | attention（K / V キャッシュ）のグラフ単位の確認プログラム。`test-backend-ops` は融合したグラフを作らないため別に持つ（先頭のコメントにビルド方法） |
 | `CMakeLists.txt` | ツリー内（`ggml_add_backend_library`）とツリー外プラグインの 2 モード |
 | `llama.cpp/` | llama.cpp への組み込み（ツリー内パッチ、`install-in-tree.sh`、手順 README） |
 

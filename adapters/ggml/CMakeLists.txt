@@ -133,6 +133,8 @@ set(GGML_CL11_KERNEL_FILES
     get_set_rows.cl
     mul_mv.cl
     mul_mv_r.cl
+    mul_mv_k.cl
+    attn.cl
     mul_mv_xcommon.cl
     mvx_defs_staged.cl
     mul_mv_x.cl

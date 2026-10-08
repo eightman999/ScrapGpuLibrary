@@ -1,3 +1,4 @@
+#ifndef CL11_NO_BASE
 // mode of mul_mv_x.cl: src1 in local memory (k_mvx_*)
 #undef KN
 #undef XS_DECL
@@ -9,3 +10,4 @@
 #define XSTAGE(XCHV, k0) MVX_STAGE(XCHV, k0)
 #define XBAR barrier(CLK_LOCAL_MEM_FENCE);
 #define LDX(i) xs[(i) + ((i) >> 4)]
+#endif // CL11_NO_BASE

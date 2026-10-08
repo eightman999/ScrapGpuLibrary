@@ -1,3 +1,4 @@
+#ifndef CL11_NO_BASE
 // mode of mul_mv_x.cl: src1 read through the caches (k_mvw_*)
 #undef KN
 #undef XS_DECL
@@ -9,3 +10,4 @@
 #define XSTAGE(XCHV, k0)
 #define XBAR
 #define LDX(i) xrow[((k0) >> 2) + (i)]
+#endif // CL11_NO_BASE

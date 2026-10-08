@@ -1,3 +1,4 @@
+#ifndef CL11_NO_BASE
 // CL11 backend: element-wise kernels. One work-item per output element.
 
 // ---------------------------------------------------------------------------------------------
@@ -147,3 +148,4 @@ kernel void k_fill_u8(global uchar * p, int off, int n, uint value) {
     if (idx >= n) return;
     p[off + idx] = (uchar)value;
 }
+#endif // CL11_NO_BASE

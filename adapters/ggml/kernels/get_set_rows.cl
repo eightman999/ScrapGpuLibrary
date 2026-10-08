@@ -1,3 +1,4 @@
+#ifndef CL11_NO_BASE
 // CL11 backend: GET_ROWS and SET_ROWS.
 
 // ---------------------------------------------------------------------------------------------
@@ -22,8 +23,8 @@ kernel void NAME(global uchar * p0, tdesc t0, global uchar * p1, tdesc t1, globa
 // r: base of the slice (i11, i12) of src0, idx: row, k: element
 #define GR_F32(r, idx, k)   dq_f32((r) + (idx) * t0.nb1, k)
 #define GR_F16(r, idx, k)   dq_f16((r) + (idx) * t0.nb1, k)
-#define GR_Q4_K(r, idx, k)  dq_q4_k((r) + (idx) * t0.nb1, k)
-#define GR_Q6_K(r, idx, k)  dq_q6_k((r) + (idx) * t0.nb1, k)
+#define GR_Q4_K(r, idx, k)  dqr_q4_k(r, t0.ne1, t0.ne0 >> 8, idx, k)
+#define GR_Q6_K(r, idx, k)  dqr_q6_k(r, t0.ne1, t0.ne0 >> 8, idx, k)
 #define GR_Q4_0(r, idx, k)  dqr_q4_0(r, t0.ne1, t0.ne0 >> 5, idx, k)
 #define GR_Q8_0(r, idx, k)  dqr_q8_0(r, t0.ne1, t0.ne0 >> 5, idx, k)
 
@@ -55,3 +56,4 @@ DEF_SET_ROWS(k_set_rows_f32_f32, LD_F32, ST_F32)
 DEF_SET_ROWS(k_set_rows_f32_f16, LD_F32, ST_F16)
 DEF_SET_ROWS(k_set_rows_f16_f32, LD_F16, ST_F32)
 DEF_SET_ROWS(k_set_rows_f16_f16, LD_F16, ST_F16)
+#endif // CL11_NO_BASE

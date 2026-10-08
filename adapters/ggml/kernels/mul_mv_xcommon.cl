@@ -1,6 +1,7 @@
+#ifndef CL11_NO_BASE
 // CL11 backend: shared definitions of the "x" mat-vec kernels (mul_mv_x.cl is included twice, see mvx_defs_*.cl).
 //
-// Mat-vec kernels for rows with 2-byte alignment (4 for q4_K) and a 16-byte aligned src1, WG_MV a multiple of 32.
+// Mat-vec kernels (F32 / F16 rows) for rows with 4-byte alignment and a 16-byte aligned src1, WG_MV a multiple of 32.
 // Like the generic kernels (every lane handles a small unit of a block, consecutive lanes handle consecutive units, so the
 // reads of the rows are contiguous), but a warp (32 lanes) computes NRW rows, so that src1 is loaded once for the NRW
 // rows. Two flavors:
@@ -74,8 +75,4 @@
         const int gi = ((k0) >> 2) + i;                                                               \
         xs[i + (i >> 4)] = ((gi << 2) < ne00) ? xrow[gi] : (float4)(0.0f);                            \
     }
-
-// 4 bytes of a row at an even byte offset, from two 16-bit loads
-uint ld32_u16x2(global const uchar * p) {
-    return (uint)(*(global const ushort *)p) | ((uint)(*(global const ushort *)(p + 2)) << 16);
-}
+#endif // CL11_NO_BASE

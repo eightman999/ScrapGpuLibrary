@@ -22,8 +22,8 @@ ScrapGpuLibrary
 
 | 段階 | 内容 | 状態 |
 | --- | --- | --- |
-| P0 | CL11（ggml backend）の実装と GPU 別の最適化、ツリー外プラグイン化 | 実施中 |
-| P1 | GPU 別の最適化の統合、性能の基準表の固定 | 未着手 |
+| P0 | CL11（ggml backend）の実装と GPU 別の最適化、ツリー外プラグイン化 | 済み |
+| P1 | GPU 別の最適化の統合、性能の基準表と正しさの許容値の固定 | 実施中（統合と性能の基準表は済み。KL ダイバージェンスの許容値は GT 430 / GT 730 の初回測定まで） |
 | P2 | runtime と backends/opencl11 の切り出し | 未着手 |
 | P3 | tensor / ops / quant の切り出し、C API | 未着手 |
 | P4 | multi-GPU transport | 未着手 |
@@ -32,17 +32,23 @@ ScrapGpuLibrary
 ### CL11
 
 - OpenCL 1.1 のホスト API と OpenCL C 1.1 のカーネルだけで書いています。fp16 演算、サブグループ、OpenCL 1.2 以降の API は使いません。
-- 主な検証は、NVIDIA 390 ドライバの GeForce GT 430（Fermi）と GT 710 / GT 730（Kepler）です。
-- Llama / Qwen2 / Qwen3 系のモデルを全層オフロードできます（Flash Attention は非対応）。対応していない op は自動で CPU に回ります。
+- 検証した GPU は、NVIDIA 390 ドライバの GeForce GT 430（Fermi）・GT 710 / GT 730（Kepler）と、Mesa の Radeon Pro WX 2100（GCN、Clover と rusticl）・Radeon RX 6400（RDNA2、rusticl）です。調整値は GPU の世代ごとに `cl11_tuning_for()` に集めています（Fermi、Kepler、AMD GCN は測定した値、AMD RDNA2 は AMD 共通の設定だけ）。
+- Llama / Qwen2 / Qwen3 系のモデルを全層オフロードできます（Flash Attention は非対応）。Q4_0 / Q8_0 / Q4_K / Q6_K の重みは GPU 向けの配置に並べ替えて持ちます。対応していない op は自動で CPU に回ります。
 - 対応 op、性能、環境変数、制約、試して採用しなかった手法は [docs/CL11.md](docs/CL11.md) を参照してください。
 - llama.cpp への組み込み方（ツリー外プラグイン、ツリー内パッチ）は [adapters/ggml/](adapters/ggml/) を参照してください。
 
-GT 430（Fermi）での llama-bench（`-ngl 99 -ub 128 -b 128`、CPU は同じマシンの Celeron G3930 の 2 スレッド）:
+llama-bench（`-ngl 99 -ub 128 -b 128 -p 128 -n 64`、CPU は同じマシンの Celeron G3930 の 2 スレッド。pp128 / tg64、単位 t/s）:
 
-| モデル | CL11 pp128 | CL11 tg64 | CPU pp128 | CPU tg64 |
-| --- | --- | --- | --- | --- |
-| Qwen3-0.6B Q8_0 | 88.6 | 21.3 | 26.0 | 15.9 |
-| Qwen2 系 0.5B Q4_0 | 118.1 | 28.9 | 47.5 | 25.8 |
+| モデル | GPU | CL11 pp128 | CL11 tg64 | CPU pp128 | CPU tg64 |
+| --- | --- | --- | --- | --- | --- |
+| Qwen3-0.6B Q8_0 | GT 430 | 89.3 | 22.3 | 25.9 | 15.6 |
+| | GT 730 | 215.7 | 33.6 | 25.9 | 15.9 |
+| | GT 710 | 110.5 | 14.6 | 26.0 | 15.7 |
+| Qwen3-0.6B Q4_K_M | GT 430 | 89.8 | 20.9 | 6.1 | 4.6 |
+| | GT 730 | 208.2 | 35.3 | 6.2 | 4.6 |
+| | GT 710 | 107.6 | 16.7 | 6.2 | 4.6 |
+
+Qwen3-1.7B Q4_K_M（1.2GB）は GT 710（2GB）で 29 層すべてをオフロードできます（pp128 39.7 / tg64 7.5、CPU は 2.0 / 1.6）。GT 710 は帯域が 11.7 GB/s しかなく、Q8_0 の生成は CPU より遅くなります（Q4_K_M なら速い）。Radeon は公式の Vulkan のほうが速いので、CL11 は使いません（[docs/HARDWARE.md](docs/HARDWARE.md)）。
 
 ## 検証機
 

@@ -16,8 +16,9 @@ float4 f4_u8(uint w) { return f4_mag(w) - (float4)(8388736.0f); }               
 float4 f4_n0(uint w) { return f4_mag(w & 0x0F0F0F0Fu) - (float4)(8388616.0f); }                 // low nibbles - 8
 float4 f4_n1(uint w) { return f4_mag((w >> 4) & 0x0F0F0F0Fu) - (float4)(8388616.0f); }          // high nibbles - 8
 
-// number of warps of a work-group (WG_MVR work-items), rows per lane: NRR groups of 32 rows
-#define NWR (WG_MVR / 32)
+// The macros below use WG_MVR (work-items of a work-group), NWR = WG_MVR / 32 (warps, they split the blocks of the rows) and NRR (groups
+// of 32 rows per work-item = rows per lane); every kernel family defines them (from WG_MVR_<TYPE> / NRR_<TYPE>, set by the host)
+// before its kernels.
 
 #define MVR_BEGIN(QB, XT, XINIT)                                                                               \
     const int lid  = (int)get_local_id(0);                                                            \
@@ -90,7 +91,7 @@ float4 f4_n1(uint w) { return f4_mag((w >> 4) & 0x0F0F0F0Fu) - (float4)(8388616.
 // the loops are instantiated twice: RS = 32 (constant offsets) for the groups of 32 rows, RS = rsz[j] for the last group
 #define MVR_Q8_LOOP(RS)                                                                               \
     for (int b = sp; b < nb; b += NWR) {                                                              \
-        const float4 x0 = xp[0], x1 = xp[1], x2 = xp[2], x3 = xp[3], x4 = xp[4], x5 = xp[5], x6 = xp[6], x7 = xp[7]; \
+        const float4 x0 = XLO(0), x1 = XLO(1), x2 = XLO(2), x3 = XLO(3), x4 = XLO(4), x5 = XLO(5), x6 = XLO(6), x7 = XLO(7); \
         for (int j = 0; j < NRR; ++j) {                                                               \
             const uint4 a = qp[j][0];                                                                 \
             const uint4 c = qp[j][RS(j)];                                                             \
@@ -99,7 +100,7 @@ float4 f4_n1(uint w) { return f4_mag((w >> 4) & 0x0F0F0F0Fu) - (float4)(8388616.
             const float s1 = dot(f4_u8(a.z), x2) + dot(f4_u8(a.w), x3);                               \
             const float s2 = dot(f4_u8(c.x), x4) + dot(f4_u8(c.y), x5);                               \
             const float s3 = dot(f4_u8(c.z), x6) + dot(f4_u8(c.w), x7);                               \
-            acc[j] = fma(d, (s0 + s1) + (s2 + s3), acc[j]);                                           \
+            acc[j] = CL11_FMA(d, (s0 + s1) + (s2 + s3), acc[j]);                                           \
             qp[j] += NWR * 2 * RS(j);                                                                 \
             dp[j] += NWR * 2 * RS(j);                                                                 \
         }                                                                                             \
@@ -108,7 +109,7 @@ float4 f4_n1(uint w) { return f4_mag((w >> 4) & 0x0F0F0F0Fu) - (float4)(8388616.
 
 #define MVR_Q4_LOOP(RS)                                                                               \
     for (int b = sp; b < nb; b += NWR) {                                                              \
-        const float4 x0 = xp[0], x1 = xp[1], x2 = xp[2], x3 = xp[3], x4 = xp[4], x5 = xp[5], x6 = xp[6], x7 = xp[7]; \
+        const float4 x0 = XLO(0), x1 = XLO(1), x2 = XLO(2), x3 = XLO(3), x4 = XLO(4), x5 = XLO(5), x6 = XLO(6), x7 = XLO(7); \
         for (int j = 0; j < NRR; ++j) {                                                               \
             const uint4 a = qp[j][0];                                                                 \
             const float d = vload_half(0, (global const half *)dp[j]);                                \
@@ -116,12 +117,27 @@ float4 f4_n1(uint w) { return f4_mag((w >> 4) & 0x0F0F0F0Fu) - (float4)(8388616.
             const float s1 = dot(f4_n0(a.z), x2) + dot(f4_n0(a.w), x3);                               \
             const float s2 = dot(f4_n1(a.x), x4) + dot(f4_n1(a.y), x5);                               \
             const float s3 = dot(f4_n1(a.z), x6) + dot(f4_n1(a.w), x7);                               \
-            acc[j] = fma(d, (s0 + s1) + (s2 + s3), acc[j]);                                           \
+            acc[j] = CL11_FMA(d, (s0 + s1) + (s2 + s3), acc[j]);                                           \
             qp[j] += NWR * RS(j);                                                                     \
             dp[j] += NWR * 2 * RS(j);                                                                 \
         }                                                                                             \
         xp += NWR * 8;                                                                                \
     }
+
+// loads of src1: through the read-only data cache (ld.global.nc, sm_35 and newer, host: CL11_NV_LDG) which has its own path and
+// relieves the load / store unit of the loads of the weights (faster for the K-quants, slower for Q4_0 / Q8_0: LDG_<type>, set by
+// the host); XLO(i) is the i-th float4 of the current block of src1 (xp)
+float4 ldg_f4(global const float4 * p) {
+#ifdef CL11_NV_LDG
+    float a, b, c, d;
+    asm("ld.global.nc.v4.f32 {%0, %1, %2, %3}, [%4];" : "=f"(a), "=f"(b), "=f"(c), "=f"(d) : "l"(p));
+    return (float4)(a, b, c, d);
+#else
+    return *p;
+#endif
+}
+#define XLO_G(i) (XLDG ? ldg_f4(xp + (i)) : xp[i])
+#define XLO_C(i) xp[i]
 
 #define RS_FULL(j)  32
 #define RS_VAR(j)   rsz[j]
@@ -133,26 +149,52 @@ float4 f4_n1(uint w) { return f4_mag((w >> 4) & 0x0F0F0F0Fu) - (float4)(8388616.
 #define MVR_ARGS_C global uchar * pa, tdesc ta, constant float4 * px, global uchar * pc, tdesc tc, bcast bc
 #define MVR_XC     px
 
+#ifndef CL11_NO_BASE
+#define WG_MVR WG_MVR_Q8_0
+#define XLDG   LDG_Q8_0
+#define NRR    NRR_Q8_0
+#define NWR    (WG_MVR / 32)
+#define XLO XLO_G
 kernel void k_mvr_q8_0(MVR_ARGS_G) {
     MVR_BEGIN(32, global, MVR_XG)
     if (full) { MVR_Q8_LOOP(RS_FULL) } else { MVR_Q8_LOOP(RS_VAR) }
     MVR_END
 }
 
+#undef XLO
+#define XLO XLO_C
+kernel void k_mvrc_q8_0(MVR_ARGS_C) {
+    MVR_BEGIN(32, constant, MVR_XC)
+    if (full) { MVR_Q8_LOOP(RS_FULL) } else { MVR_Q8_LOOP(RS_VAR) }
+    MVR_END
+}
+#undef XLO
+#undef XLDG
+#undef NWR
+#undef NRR
+#undef WG_MVR
+
+#define WG_MVR WG_MVR_Q4_0
+#define XLDG   LDG_Q4_0
+#define NRR    NRR_Q4_0
+#define NWR    (WG_MVR / 32)
+#define XLO XLO_G
 kernel void k_mvr_q4_0(MVR_ARGS_G) {
     MVR_BEGIN(16, global, MVR_XG)
     if (full) { MVR_Q4_LOOP(RS_FULL) } else { MVR_Q4_LOOP(RS_VAR) }
     MVR_END
 }
 
-kernel void k_mvrc_q8_0(MVR_ARGS_C) {
-    MVR_BEGIN(32, constant, MVR_XC)
-    if (full) { MVR_Q8_LOOP(RS_FULL) } else { MVR_Q8_LOOP(RS_VAR) }
-    MVR_END
-}
-
+#undef XLO
+#define XLO XLO_C
 kernel void k_mvrc_q4_0(MVR_ARGS_C) {
     MVR_BEGIN(16, constant, MVR_XC)
     if (full) { MVR_Q4_LOOP(RS_FULL) } else { MVR_Q4_LOOP(RS_VAR) }
     MVR_END
 }
+#undef XLO
+#undef XLDG
+#undef NWR
+#undef NRR
+#undef WG_MVR
+#endif // CL11_NO_BASE
