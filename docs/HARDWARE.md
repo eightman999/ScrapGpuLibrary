@@ -2,7 +2,7 @@
 
 ## 検証機（TB250）
 
-- マザーボード: BIOSTAR TB250-BTC PRO（マイニング用。GPU は PCIe x1 ライザー経由）
+- マザーボード: BIOSTAR TB250-BTC PRO（マイニング用。GPU はライザー経由。リンクは下の「GPU」節）
 - CPU: Intel Celeron G3930（2 コア、AVX なし）、メモリ 32GB
 - OS: Debian 13（kernel 6.12）
 - NVIDIA ドライバ: 390.157（Fermi を扱える最後の系列）。OpenCL のみ使用。
@@ -20,7 +20,8 @@
 | Radeon Pro WX 2100 | Polaris 12（GCN, 8 CU） | 1.1（Clover）/ 3.0（rusticl） | 2GB | 512MiB（Mesa は超過を拒否） | 43.6 GB/s | 512 シェーダ（wave64） |
 | Radeon RX 6400 | RDNA2（navi24, 12 CU） | 1.1（Clover、使用不可）/ 3.0（rusticl） | 4GB | | 126.6 GB/s（rusticl） | |
 
-- いずれも PCIe x1 です。ホストからデバイスへの転送は約 0.40 GB/s（GT 730 / GT 710 で実測）なので、層ごとに CPU と GPU を往復する部分オフロードは遅くなります。全層オフロードが前提です。
+- PCIe リンクは sysfs の `current_link_speed` / `current_link_width` で確認しました。RX 6400 は上流のルートポートからカード内部のブリッジまでが 5.0 GT/s x4（Gen2 x4、理論約 2 GB/s。カードは Gen4 x4 まで対応）で、WX 2100 / GT 730 / GT 710 / GT 430 は 5.0 GT/s x1（Gen2 x1、理論約 0.5 GB/s）です。CPU 側のルートポートの最大が 5.0 GT/s で、Celeron G3930 / B250 が本来対応する Gen3 になっていません（BIOS が Gen2 に固定している可能性。未確認で、変更は試していません）。RX 6400 の 03:00.0 に表示される 16 GT/s x16 はカード内部のブリッジとの間のリンクで、ホストとの帯域ではありません。
+- ホストとデバイスの転送は、GT 730 / GT 710 で約 0.40 GB/s、WX 2100 で 0.36 GB/s（ホスト→GPU）/ 0.29 GB/s（GPU→ホスト）、RX 6400 で 1.4 GB/s（ホスト→GPU）/ 1.26 GB/s（GPU→ホスト）です（rusticl の `clEnqueueRead/WriteBuffer`、4 MiB 以上。詳細は [VULKAN_AMD.md](VULKAN_AMD.md)）。層ごとに CPU と GPU を往復する部分オフロードは遅くなるので、全層オフロードが前提です。
 - 生成（tg）は帯域で、プロンプト処理（pp）は演算性能で決まります。そのため GT 710 は、演算性能では GT 430 を上回りますが、生成では GT 430 より遅くなります。
 
 ## ドライバの既知の癖
@@ -51,6 +52,8 @@ Qwen3-0.6B Q8_0、`-ngl 99 -ub 128 -b 128 -p 128 -n 64`。CPU はこのマシン
 | GeForce GT 710 | CL11（Q4_K 系のモデルで） | CL11 は Q8_0 で pp128 110.5 / tg64 14.6 t/s。帯域が 11.7 GB/s なので、Q8_0 の生成は CPU（15.7）より遅い。Q4_K_M は 107.6 / 16.7（CPU の tg は 4.6）で、Qwen3-1.7B Q4_K_M も 29 層すべてをオフロードできる（7.5 t/s、CPU は 1.6） |
 | Radeon Pro WX 2100 | 公式 Vulkan（既定の設定） | Qwen3-0.6B Q8_0 で Vulkan は pp128 559 / tg64 46.2 t/s、0.46 J/token。CL11 は Clover で 318 / 20.1 t/s、0.72 J/token（rusticl は pp 446 / tg 14.0）。Vulkan の設定を変えても差は 1% 未満 |
 | Radeon RX 6400 | 公式 Vulkan（既定の設定） | Qwen3-0.6B Q8_0 で Vulkan は pp128 2455 / tg64 139.5 t/s、0.24 J/token。CL11（rusticl）は 854 / 20.3 t/s、0.45 J/token。Vulkan の設定を変えても既定を上回らなかった。CL11 は RDNA 向けの調整をしておらず、AMD 全般の設定（`mad`、公称上限の厳守、K-quant の mat-vec の形など）だけを有効にしている |
+
+Vulkan の詳しい内訳（上限比、1 トークンの時間の内訳、GPU 側のサンプリング `-bs`、量子化形式、2 枚の協調）は [VULKAN_AMD.md](VULKAN_AMD.md) にあります。要点: tg は帯域の上限の 5〜7 割（小さいモデルほど低い。固定費が 1 トークンあたり 2〜3 ms）、サンプリングを GPU で行う `-bs` で実用の tg が RX 6400 で約 +7%、WX 2100 で約 +10%、1 枚に載らないモデルは `-sm layer`（`-sm row` は Vulkan で使えず、`-sm tensor` は 0.3 t/s）。
 
 J/token は hwmon の `power1_average`（GPU 単体）による。RX 6400 のアイドル電力は約 1.04 W。WX 2100 は `power1_input` で測り、アイドル電力は約 3.22 W。Clover は WX 2100（Polaris）では動き、RX 6400（RDNA2）ではハングする。
 
