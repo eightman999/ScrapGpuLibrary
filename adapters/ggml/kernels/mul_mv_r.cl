@@ -124,6 +124,76 @@ float4 f4_n1(uint w) { return f4_mag((w >> 4) & 0x0F0F0F0Fu) - (float4)(8388616.
         xp += NWR * 8;                                                                                \
     }
 
+// ---------------------------------------------------------------------------------------------------------------------------
+// Fermi variant ("denormal products", cfg.mvr_dn, DN_<type>; docs/CL11.md): a nibble or byte masked in place is the float n * 2^(p - 149)
+// (p = bit position, bits 0..23: a denormal or one of the smallest normal numbers, exact, and the FFMA of Fermi handles denormals at full
+// speed), so the quants need no conversion: one AND and one FFMA per weight (the PRMT of the normal kernels is a 16-per-clock instruction on
+// Fermi). The byte 3 of a word (bits 24..31) is shifted down first. src1 is prepared once per mat-vec by k_xprep (xs = x * 2^(DN_E - p) for
+// the bit position p of the weight that multiplies x, so every product is n * x * 2^(DN_E - 149), and the sums of x over groups of 16
+// weights for the offsets: Q4_0 -8, Q6_K -32), the kernels read both from constant memory (the k_mvrc_* kernels; the general k_mvr_* kernels
+// keep the normal arithmetic). Scratch layout: xs[K] floats, then sums[K / 16].
+#define P2(k) as_float((uint)(127 + (k)) << 23)
+#define DN_E 100
+#define DN_SCL4 ((float4)(P2(DN_E), P2(DN_E - 8), P2(DN_E - 16), P2(DN_E)))                     // low nibble / byte i of a word
+#define DN_SCH4 ((float4)(P2(DN_E - 4), P2(DN_E - 12), P2(DN_E - 20), P2(DN_E - 4)))            // high nibble of byte i
+
+#if !defined(CL11_NO_BASE) && ((defined(DN_Q4_0) && DN_Q4_0) || (defined(DN_Q4_K) && DN_Q4_K) || (defined(DN_Q6_K) && DN_Q6_K))
+// one work-item per group of 16 weights; hbit: the float4 index bit that selects the pattern of the high nibbles (Q4_0: 4, Q4_K: 8, none: 0)
+kernel void k_xprep(global uchar * pb, tdesc tb, global float * dst, int hbit) {
+    const int g = LGID() * (int)get_local_size(0) + (int)get_local_id(0);
+    if (g >= (tb.ne0 >> 4)) return;
+    global const float4 * x = (global const float4 *)(pb + tb.off) + 4 * g;
+    global float4 * d = (global float4 *)dst + 4 * g;
+    float4 s = (float4)(0.0f);
+    for (int q = 0; q < 4; ++q) {
+        const float4 v = x[q];
+        s += v;
+        d[q] = v * (((4 * g + q) & hbit) != 0 ? DN_SCH4 : DN_SCL4);
+    }
+    dst[tb.ne0 + g] = (s.x + s.y) + (s.z + s.w);
+}
+#endif
+
+#define DN_Q4_WORD(W, I)                                                                              \
+    {                                                                                                 \
+        const float4 xl = XLO(I), xh = XLO((I) + 4);                                                  \
+        for (int j = 0; j < NRR; ++j) {                                                               \
+            const uint w = a[j].W;                                                                    \
+            const uint t = w >> 24;                                                                   \
+            sl[j] = fma(as_float(w & 0x0000000Fu), xl.x, sl[j]);                                      \
+            sh[j] = fma(as_float(w & 0x000000F0u), xh.x, sh[j]);                                      \
+            sl[j] = fma(as_float(w & 0x00000F00u), xl.y, sl[j]);                                      \
+            sh[j] = fma(as_float(w & 0x0000F000u), xh.y, sh[j]);                                      \
+            sl[j] = fma(as_float(w & 0x000F0000u), xl.z, sl[j]);                                      \
+            sh[j] = fma(as_float(w & 0x00F00000u), xh.z, sh[j]);                                      \
+            sl[j] = fma(as_float(t & 0x0Fu), xl.w, sl[j]);                                            \
+            sh[j] = fma(as_float(t & 0xF0u), xh.w, sh[j]);                                            \
+        }                                                                                             \
+    }
+
+// psp: the sums of x of the groups of 16 weights (2 per block)
+#define MVR_Q4_DN_LOOP(RS)                                                                            \
+    for (int b = sp; b < nb; b += NWR) {                                                              \
+        uint4 a[NRR];                                                                                 \
+        float sl[NRR], sh[NRR], dd[NRR];                                                              \
+        for (int j = 0; j < NRR; ++j) {                                                               \
+            a[j]  = qp[j][0];                                                                         \
+            dd[j] = vload_half(0, (global const half *)dp[j]);                                        \
+            sl[j] = 0.0f;                                                                             \
+            sh[j] = 0.0f;                                                                             \
+        }                                                                                             \
+        DN_Q4_WORD(x, 0) DN_Q4_WORD(y, 1) DN_Q4_WORD(z, 2) DN_Q4_WORD(w, 3)                           \
+        const float sx = psp[0] + psp[1];                                                             \
+        for (int j = 0; j < NRR; ++j) {                                                               \
+            const float u = fma(-P2(DN_E - 146), sx, sl[j] + sh[j]);                                  \
+            acc[j] = fma(dd[j] * P2(149 - DN_E), u, acc[j]);                                          \
+            qp[j] += NWR * RS(j);                                                                     \
+            dp[j] += NWR * 2 * RS(j);                                                                 \
+        }                                                                                             \
+        xp += NWR * 8;                                                                                \
+        psp += NWR * 2;                                                                               \
+    }
+
 // loads of src1: through the read-only data cache (ld.global.nc, sm_35 and newer, host: CL11_NV_LDG) which has its own path and
 // relieves the load / store unit of the loads of the weights (faster for the K-quants, slower for Q4_0 / Q8_0: LDG_<type>, set by
 // the host); XLO(i) is the i-th float4 of the current block of src1 (xp)
@@ -187,11 +257,20 @@ kernel void k_mvr_q4_0(MVR_ARGS_G) {
 
 #undef XLO
 #define XLO XLO_C
+#if defined(DN_Q4_0) && DN_Q4_0
+kernel void k_mvrc_q4_0(MVR_ARGS_C) {
+    MVR_BEGIN(16, constant, MVR_XC)
+    constant const float * psp = (constant const float *)px + ta.ne0 + sp * 2;
+    if (full) { MVR_Q4_DN_LOOP(RS_FULL) } else { MVR_Q4_DN_LOOP(RS_VAR) }
+    MVR_END
+}
+#else
 kernel void k_mvrc_q4_0(MVR_ARGS_C) {
     MVR_BEGIN(16, constant, MVR_XC)
     if (full) { MVR_Q4_LOOP(RS_FULL) } else { MVR_Q4_LOOP(RS_VAR) }
     MVR_END
 }
+#endif
 #undef XLO
 #undef XLDG
 #undef NWR
