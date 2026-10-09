@@ -131,6 +131,7 @@ set(GGML_CL11_KERNEL_FILES
     elementwise.cl
     norm_rope.cl
     get_set_rows.cl
+    moe_ops.cl
     mul_mv.cl
     mul_mv_r.cl
     mul_mv_k.cl

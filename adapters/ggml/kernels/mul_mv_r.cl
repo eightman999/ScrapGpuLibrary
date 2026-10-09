@@ -20,6 +20,18 @@ float4 f4_n1(uint w) { return f4_mag((w >> 4) & 0x0F0F0F0Fu) - (float4)(8388616.
 // of 32 rows per work-item = rows per lane); every kernel family defines them (from WG_MVR_<TYPE> / NRR_<TYPE>, set by the host)
 // before its kernels.
 
+// MVR_ABASE declares i02, i03 and abase (the slice of src0 of the work-group). MUL_MAT: the broadcast of the batch dimensions of dst.
+// MUL_MAT_ID (k_mvri_* / k_mvki_*, below): dst is [rows, slots, tokens], the expert of (slot i1, token i2) is read from the ids (I32,
+// [slots, tokens]) by the work-group itself, so the host does not need the ids.
+#define MVR_ABASE_BCAST                                                                               \
+    const int i02 = FDIV_RAW(i2, bc.m2, bc.l2);                                                       \
+    const int i03 = FDIV_RAW(i3, bc.m3, bc.l3);                                                       \
+    global const uchar * abase = pa + ta.off + i02 * ta.nb2 + i03 * ta.nb3;
+#define MVR_ABASE_IDS                                                                                 \
+    const int i02 = clamp(*(global const int *)(pids + tids.off + i1 * tids.nb0 + i2 * tids.nb1), 0, ta.ne2 - 1); \
+    global const uchar * abase = pa + ta.off + i02 * ta.nb2;
+#define MVR_ABASE MVR_ABASE_BCAST
+
 #define MVR_BEGIN(QB, XT, XINIT)                                                                               \
     const int lid  = (int)get_local_id(0);                                                            \
     const int lane = lid & 31;                                                                        \
@@ -34,9 +46,7 @@ float4 f4_n1(uint w) { return f4_mag((w >> 4) & 0x0F0F0F0Fu) - (float4)(8388616.
     g = gq;                                                                                           \
     const int i3 = FDIV(g, tc, 2);                                                                    \
     const int i2 = g - i3 * tc.ne2;                                                                   \
-    const int i02 = FDIV_RAW(i2, bc.m2, bc.l2);                                                       \
-    const int i03 = FDIV_RAW(i3, bc.m3, bc.l3);                                                       \
-    global const uchar * abase = pa + ta.off + i02 * ta.nb2 + i03 * ta.nb3;                           \
+    MVR_ABASE                                                                                         \
     const int M   = ta.ne1;                                                                           \
     const int nb  = ta.ne0 >> 5;                                                                      \
     const int ngrp = (M + 31) >> 5;                                                                   \
@@ -216,6 +226,8 @@ float4 ldg_f4(global const float4 * p) {
 // that starts at x (at most 64 KiB), the loads of x then do not use the load / store units
 #define MVR_ARGS_G global uchar * pa, tdesc ta, global uchar * pb, tdesc tb, global uchar * pc, tdesc tc, bcast bc
 #define MVR_XG     ((global const float4 *)(pb + tb.off + i1 * tb.nb1 + i2 * tb.nb2 + i3 * tb.nb3))
+// MUL_MAT_ID (generation): + the ids
+#define MVR_ARGS_ID global uchar * pa, tdesc ta, global uchar * pb, tdesc tb, global uchar * pc, tdesc tc, bcast bc, global uchar * pids, tdesc tids
 #define MVR_ARGS_C global uchar * pa, tdesc ta, constant float4 * px, global uchar * pc, tdesc tc, bcast bc
 #define MVR_XC     px
 
@@ -276,4 +288,45 @@ kernel void k_mvrc_q4_0(MVR_ARGS_C) {
 #undef NWR
 #undef NRR
 #undef WG_MVR
+
+// ---------------------------------------------------------------------------------------------------------------------------
+// MUL_MAT_ID with one token per column (generation): the same kernels, the slice of src0 is the expert read from the ids by the work-group
+// (MVR_ABASE_IDS). tc is dst [rows, slots, tokens]; src1 is [K, 1 or slots, tokens] (tb.nb1 is 0 when it is shared by the slots).
+#undef MVR_ABASE
+#define MVR_ABASE MVR_ABASE_IDS
+
+#define WG_MVR WG_MVR_Q8_0
+#define XLDG   LDG_Q8_0
+#define NRR    NRR_Q8_0
+#define NWR    (WG_MVR / 32)
+#define XLO XLO_G
+kernel void k_mvri_q8_0(MVR_ARGS_ID) {
+    MVR_BEGIN(32, global, MVR_XG)
+    if (full) { MVR_Q8_LOOP(RS_FULL) } else { MVR_Q8_LOOP(RS_VAR) }
+    MVR_END
+}
+#undef XLO
+#undef XLDG
+#undef NWR
+#undef NRR
+#undef WG_MVR
+
+#define WG_MVR WG_MVR_Q4_0
+#define XLDG   LDG_Q4_0
+#define NRR    NRR_Q4_0
+#define NWR    (WG_MVR / 32)
+#define XLO XLO_G
+kernel void k_mvri_q4_0(MVR_ARGS_ID) {
+    MVR_BEGIN(16, global, MVR_XG)
+    if (full) { MVR_Q4_LOOP(RS_FULL) } else { MVR_Q4_LOOP(RS_VAR) }
+    MVR_END
+}
+#undef XLO
+#undef XLDG
+#undef NWR
+#undef NRR
+#undef WG_MVR
+
+#undef MVR_ABASE
+#define MVR_ABASE MVR_ABASE_BCAST
 #endif // CL11_NO_BASE
