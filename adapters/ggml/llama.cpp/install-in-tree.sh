@@ -48,6 +48,14 @@ for f in "$repo"/src/backends/opencl11/kernels/*.cl; do
     copy_if_different "$f" "$dest/opencl11/kernels/$(basename "$f")"
 done
 copy_if_different "$adapter/include/ggml-cl11.h" "$tree/ggml/include/ggml-cl11.h"
+# stale kernel location from pre-split installs
+if [ -d "$dest/kernels" ]; then
+    for f in "$dest"/kernels/*.cl; do
+        if [ -e "$f" ]; then
+            rm "$f"; echo "removed  ${f#"$tree"/}"; changed=1
+        fi
+    done
+fi
 # kernels that no longer exist in the adapter
 if [ -d "$dest/opencl11/kernels" ]; then
     for f in "$dest"/opencl11/kernels/*.cl; do

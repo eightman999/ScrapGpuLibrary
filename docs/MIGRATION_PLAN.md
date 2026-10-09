@@ -298,6 +298,10 @@ Step 3 done (2026-10-09): moved the kernel id/class/table helpers and OpenCL pro
 
 Step 4 done (2026-10-09): moved buffer limits/alignment, strict/above-max allocation policy, end-of-buffer allocation probe, constant sub-buffer cache creation and newest-first release helper to `src/backends/opencl11/buffer.{h,cpp}`. `ggml-cl11.cpp` keeps the ggml buffer vtable, dummy base pointer/offset handling, R32 repack transfer and the `cl11_fill` launch shim until the executor moves in Step 5. The kernel file list and generated-header embedding loop now live once in `src/backends/opencl11/opencl11_kernels.cmake`, included by both root and adapter CMake paths.
 
+Step 5 done (2026-10-09): moved header-only `cl11_args`, `cl11_launch`, `cl11_div_up`, `cl11_fill`, launch counting/log state, and `GGML_CL11_PROFILE` collect/key/print state to `src/backends/opencl11/executor.h`. `ggml-cl11.cpp` still owns Phase 3 adapter work: ggml op dispatch (`cl11_op_*`), graph compute, fusion decisions, ggml buffer callbacks/base pointer/offsets, R32 repack transfer, scratch-buffer policy, and ggml-specific profile key string construction. Remaining shims are the ggml-owned wrappers that pass `c->queue`, `c->exec`, `c->kernels[]`, and `c->cfg` into backend inline helpers, plus the `cl11_const_sub(cl11_device_context *, ...)` wrapper while the ggml device wrapper still owns the cache vector.
+
+Phase 2 implemented (2026-10-09): OpenCL runtime device probing/tuning (`device.*`), lazy context/error/profile flag setup (`context.*`), kernel table/program build/source embedding (`kernels.*`, `opencl11_kernels.cmake`), buffer allocation/probe/limits/constant sub-buffer cache (`buffer.*`), and executor launch/profiling/fill helpers (`executor.h`) are now in `src/backends/opencl11/` with no ggml includes. The ggml adapter remains the Phase 3 owner of ggml API registration, op translation/dispatch, fusion planning, tensor descriptor construction, R32 repack layout transfer, scratch lifetime tied to ggml graph execution, and compatibility public `ggml_backend_cl11_*` entry points.
+
 ## 6. リスクと未決
 
 | 項目 | リスク | 未決 / 提案 |

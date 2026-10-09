@@ -29,6 +29,7 @@
 #include "opencl11/buffer.h"
 #include "opencl11/context.h"
 #include "opencl11/device.h"
+#include "opencl11/executor.h"
 #include "opencl11/kernels.h"
 
 #include <algorithm>
@@ -175,23 +176,7 @@ struct cl11_device_context {
     mid_ids_cache mid_ids;
     int mid_max_tokens = -1; // GGML_CL11_MID_MAX_TOKENS: up to this many tokens MUL_MAT_ID reads the expert numbers on the GPU (no synchronization); -1: while n_used * n_tokens <= n_expert
 
-    // GGML_CL11_PROFILE=1: time every kernel with OpenCL events, the summary is printed when the backend is freed
-    struct prof_stat {
-        std::string name;
-        double      ns    = 0;
-        size_t      count = 0;
-        double      bytes = 0; // bytes of the weights (MUL_MAT)
-    };
-    struct prof_pending {
-        cl_event event;
-        int      key;
-    };
-    bool                      profile = false;
-    bool                      launch_log = false; // GGML_CL11_LAUNCH_LOG=1: print the number of kernel launches of every graph
-    size_t                    n_launches = 0;     // kernels enqueued so far
-    int                       prof_key = -1; // key of the node that is being enqueued
-    std::vector<prof_stat>    prof_stats;
-    std::vector<prof_pending> prof_pending_events;
+    cl11_executor_state exec;
 
     ggml_backend_buffer_type buft = {};
     ggml_backend_device      dev  = {};
@@ -314,7 +299,7 @@ static bool cl11_ensure_context(cl11_device_context * c) {
 
     // Compatibility shim: ggml still owns the device context struct until later Phase 2 steps,
     // while OpenCL context/queue creation now lives in the OpenCL11 backend.
-    if (!cl11_ensure_runtime_context(c->info, c->name.c_str(), c->context_ready, c->failed, c->context, c->queue, c->profile, c->launch_log)) {
+    if (!cl11_ensure_runtime_context(c->info, c->name.c_str(), c->context_ready, c->failed, c->context, c->queue, c->exec.profile, c->exec.launch_log)) {
         return false;
     }
 
@@ -689,116 +674,6 @@ static bool cl11_ensure_kprogram(cl11_device_context * c) {
 }
 
 //
-// kernel launch helpers
-//
-
-struct cl11_args {
-    cl_kernel kernel;
-    cl_uint   idx = 0;
-    bool      ok  = true;
-
-    explicit cl11_args(cl_kernel k) : kernel(k) {}
-
-    template <typename T>
-    cl11_args & set(const T & v) {
-        const cl_int err = clSetKernelArg(kernel, idx++, sizeof(T), &v);
-        if (err != CL_SUCCESS) {
-            GGML_LOG_ERROR("%s: clSetKernelArg(%u) failed: %s\n", __func__, idx - 1, cl11_err_str(err));
-            ok = false;
-        }
-        return *this;
-    }
-
-    // a __local pointer argument of `bytes` bytes
-    cl11_args & set_local(size_t bytes) {
-        const cl_int err = clSetKernelArg(kernel, idx++, bytes, nullptr);
-        if (err != CL_SUCCESS) {
-            GGML_LOG_ERROR("%s: clSetKernelArg(%u, local %zu) failed: %s\n", __func__, idx - 1, bytes, cl11_err_str(err));
-            ok = false;
-        }
-        return *this;
-    }
-};
-
-// collect the timings of the finished kernels (the queue has been finished by the caller)
-static void cl11_prof_collect(cl11_device_context * c) {
-    for (const auto & p : c->prof_pending_events) {
-        cl_ulong t0 = 0, t1 = 0;
-        clGetEventProfilingInfo(p.event, CL_PROFILING_COMMAND_START, sizeof(t0), &t0, nullptr);
-        clGetEventProfilingInfo(p.event, CL_PROFILING_COMMAND_END,   sizeof(t1), &t1, nullptr);
-        if (p.key >= 0 && (size_t) p.key < c->prof_stats.size()) {
-            c->prof_stats[p.key].ns += (double) (t1 - t0);
-        }
-        clReleaseEvent(p.event);
-    }
-    c->prof_pending_events.clear();
-}
-
-static int cl11_prof_key(cl11_device_context * c, const std::string & name) {
-    for (size_t i = 0; i < c->prof_stats.size(); ++i) {
-        if (c->prof_stats[i].name == name) {
-            return (int) i;
-        }
-    }
-    c->prof_stats.emplace_back();
-    c->prof_stats.back().name = name;
-    return (int) c->prof_stats.size() - 1;
-}
-
-static void cl11_prof_print(cl11_device_context * c) {
-    if (c->prof_stats.empty()) {
-        return;
-    }
-    std::vector<const cl11_device_context::prof_stat *> v;
-    double total = 0;
-    for (const auto & s : c->prof_stats) {
-        v.push_back(&s);
-        total += s.ns;
-    }
-    std::sort(v.begin(), v.end(), [](auto * a, auto * b) { return a->ns > b->ns; });
-    fprintf(stderr, "cl11 profile of %s: total kernel time %.3f ms\n", c->name.c_str(), total / 1e6);
-    for (auto * s : v) {
-        char gbs[64] = "";
-        if (s->bytes > 0 && s->ns > 0) {
-            snprintf(gbs, sizeof(gbs), "  weights %.2f GB/s", s->bytes / s->ns);
-        }
-        fprintf(stderr, "  %-44s %6zu calls %10.3f ms %8.1f us/call %5.1f%%%s\n", s->name.c_str(), s->count,
-                s->ns / 1e6, s->ns / 1e3 / std::max<size_t>(1, s->count), 100.0 * s->ns / std::max(1.0, total), gbs);
-    }
-    c->prof_stats.clear();
-}
-
-// enqueue `n_groups` work-groups of `local` work-items. The launch is 2-D so that no dimension
-// exceeds 32768 groups; the kernels linearize the group index themselves (LGID()).
-static bool cl11_launch(cl11_device_context * c, const cl11_args & args, size_t local, size_t n_groups) {
-    if (!args.ok) {
-        return false;
-    }
-    if (n_groups == 0) {
-        return true;
-    }
-    ++c->n_launches;
-    const size_t gx = std::min<size_t>(n_groups, 32768);
-    const size_t gy = (n_groups + gx - 1) / gx;
-    const size_t global_size[2] = { gx * local, gy };
-    const size_t local_size[2]  = { local, 1 };
-    cl_event event = nullptr;
-    const cl_int err = clEnqueueNDRangeKernel(c->queue, args.kernel, 2, nullptr, global_size, local_size, 0, nullptr, c->profile ? &event : nullptr);
-    if (event != nullptr) {
-        c->prof_pending_events.push_back({ event, c->prof_key });
-    }
-    if (err != CL_SUCCESS) {
-        GGML_LOG_ERROR("%s: clEnqueueNDRangeKernel failed: %s (groups %zu x %zu, local %zu)\n", __func__, cl11_err_str(err), gx, gy, local);
-        return false;
-    }
-    return true;
-}
-
-static size_t cl11_div_up(size_t a, size_t b) {
-    return (a + b - 1) / b;
-}
-
-//
 // buffers
 //
 
@@ -1049,49 +924,6 @@ static bool cl11_rp_transfer(cl11_device_context * c, cl_mem mem, const ggml_ten
     return true;
 }
 
-// Compatibility shim until Step 5 moves the executor: fill planning is backend-owned, but launching still uses cl11_args/cl11_launch here.
-// memset of a range of a buffer with a kernel (OpenCL 1.2 clEnqueueFillBuffer is not allowed)
-static bool cl11_fill(cl11_device_context * c, cl_mem mem, size_t offset, size_t size, uint8_t value) {
-    if (size == 0) {
-        return true;
-    }
-    if (!cl11_ensure_program(c)) {
-        return false;
-    }
-
-    const uint32_t pattern = 0x01010101u * (uint32_t) value;
-    cl11_fill_span head = {};
-    cl11_fill_span body = {};
-    cl11_fill_span tail = {};
-    cl11_fill_plan(offset, size, head, body, tail);
-
-    auto fill_bytes = [&](size_t off, size_t n) -> bool {
-        if (n == 0) {
-            return true;
-        }
-        cl11_args a(c->kernels[K_FILL_U8]);
-        a.set(mem).set((int32_t) off).set((int32_t) n).set((cl_uint) value);
-        return cl11_launch(c, a, c->cfg.wg_ew, cl11_div_up(n, c->cfg.wg_ew));
-    };
-
-    if (!fill_bytes(head.offset, head.count)) {
-        return false;
-    }
-    if (body.count > 0) {
-        // the work-items address the buffer with int offsets: split very large fills
-        const size_t chunk = 1u << 28; // words
-        for (size_t done = 0; done < body.count; done += chunk) {
-            const size_t n = std::min(chunk, body.count - done);
-            cl11_args b(c->kernels[K_FILL_U32]);
-            b.set(mem).set((int32_t) (body.offset + done * 4)).set((int32_t) n).set((cl_uint) pattern);
-            if (!cl11_launch(c, b, c->cfg.wg_ew, cl11_div_up(n, c->cfg.wg_ew))) {
-                return false;
-            }
-        }
-    }
-    return fill_bytes(tail.offset, tail.count);
-}
-
 static void ggml_backend_cl11_buffer_free_buffer(ggml_backend_buffer_t buffer) {
     auto * bctx = (cl11_buffer_context *) buffer->context;
     {
@@ -1111,8 +943,13 @@ static void * ggml_backend_cl11_buffer_get_base(ggml_backend_buffer_t buffer) {
 
 static void ggml_backend_cl11_buffer_memset_tensor(ggml_backend_buffer_t buffer, ggml_tensor * tensor, uint8_t value, size_t offset, size_t size) {
     auto * bctx = (cl11_buffer_context *) buffer->context;
+    if (size == 0) {
+        return;
+    }
     std::lock_guard<std::mutex> lock(bctx->dctx->mutex);
-    if (!cl11_fill(bctx->dctx, bctx->mem, cl11_tensor_offset(tensor) + offset, size, value)) {
+    if (!cl11_ensure_program(bctx->dctx) ||
+            !cl11_fill(bctx->dctx->queue, bctx->dctx->exec, bctx->dctx->kernels[K_FILL_U32], bctx->dctx->kernels[K_FILL_U8],
+                       bctx->dctx->cfg, bctx->mem, cl11_tensor_offset(tensor) + offset, size, value)) {
         GGML_ABORT("%s: memset failed\n", __func__);
     }
 }
@@ -1201,7 +1038,9 @@ static bool ggml_backend_cl11_buffer_cpy_tensor(ggml_backend_buffer_t buffer, co
 static void ggml_backend_cl11_buffer_clear(ggml_backend_buffer_t buffer, uint8_t value) {
     auto * bctx = (cl11_buffer_context *) buffer->context;
     std::lock_guard<std::mutex> lock(bctx->dctx->mutex);
-    if (!cl11_fill(bctx->dctx, bctx->mem, 0, bctx->size, value)) {
+    if (!cl11_ensure_program(bctx->dctx) ||
+            !cl11_fill(bctx->dctx->queue, bctx->dctx->exec, bctx->dctx->kernels[K_FILL_U32], bctx->dctx->kernels[K_FILL_U8],
+                       bctx->dctx->cfg, bctx->mem, 0, bctx->size, value)) {
         GGML_ABORT("%s: clear failed\n", __func__);
     }
 }
@@ -1535,7 +1374,7 @@ static bool cl11_op_binary(cl11_device_context * c, const ggml_tensor * dst) {
 
     cl11_args a(c->kernels[kid]);
     a.set(s0.mem).set(s0.td).set(s1.mem).set(s1.td).set(d.mem).set(d.td).set(n);
-    return cl11_launch(c, a, c->cfg.wg_ew, cl11_div_up(n, c->cfg.wg_ew));
+    return cl11_launch(c->queue, c->exec, a, c->cfg.wg_ew, cl11_div_up(n, c->cfg.wg_ew));
 }
 
 // UNARY, SCALE, CLAMP, SQR, SQRT: op codes of k_unary
@@ -1577,7 +1416,7 @@ static bool cl11_op_unary(cl11_device_context * c, const ggml_tensor * dst) {
 
     cl11_args a(c->kernels[K_UNARY]);
     a.set(s.mem).set(s.td).set(d.mem).set(d.td).set(n).set(code).set(p0).set(p1);
-    return cl11_launch(c, a, c->cfg.wg_ew, cl11_div_up(n, c->cfg.wg_ew));
+    return cl11_launch(c->queue, c->exec, a, c->cfg.wg_ew, cl11_div_up(n, c->cfg.wg_ew));
 }
 
 static bool cl11_op_glu(cl11_device_context * c, const ggml_tensor * dst) {
@@ -1594,7 +1433,7 @@ static bool cl11_op_glu(cl11_device_context * c, const ggml_tensor * dst) {
 
     cl11_args a(c->kernels[K_GLU]);
     a.set(s0.mem).set(s0.td).set(s1.mem).set(s1.td).set(d.mem).set(d.td).set(n).set(code).set(split).set(swapped).set(nc);
-    return cl11_launch(c, a, c->cfg.wg_ew, cl11_div_up(n, c->cfg.wg_ew));
+    return cl11_launch(c->queue, c->exec, a, c->cfg.wg_ew, cl11_div_up(n, c->cfg.wg_ew));
 }
 
 static bool cl11_op_rms_norm(cl11_device_context * c, const ggml_tensor * dst) {
@@ -1606,7 +1445,7 @@ static bool cl11_op_rms_norm(cl11_device_context * c, const ggml_tensor * dst) {
     const cl11_tref s = cl11_ref(src0), d = cl11_ref(dst);
     cl11_args a(c->kernels[K_RMS_NORM]);
     a.set(s.mem).set(s.td).set(d.mem).set(d.td).set(eps);
-    return cl11_launch(c, a, c->cfg.wg_row, (size_t) (src0->ne[1] * src0->ne[2] * src0->ne[3]));
+    return cl11_launch(c->queue, c->exec, a, c->cfg.wg_row, (size_t) (src0->ne[1] * src0->ne[2] * src0->ne[3]));
 }
 
 // RMS_NORM (F32) followed by a MUL with a weight vector: the weights `w` (ne0 contiguous floats) of the MUL `mul` whose other operand is the
@@ -1639,7 +1478,7 @@ static bool cl11_op_rms_norm_mul(cl11_device_context * c, const ggml_tensor * no
     const cl11_tref s = cl11_ref(src0), wr = cl11_ref(w), d = cl11_ref(mul);
     cl11_args a(c->kernels[K_RMS_NORM_MUL]);
     a.set(s.mem).set(s.td).set(wr.mem).set(wr.td).set(d.mem).set(d.td).set(eps);
-    return cl11_launch(c, a, c->cfg.wg_row, (size_t) (src0->ne[1] * src0->ne[2] * src0->ne[3]));
+    return cl11_launch(c->queue, c->exec, a, c->cfg.wg_row, (size_t) (src0->ne[1] * src0->ne[2] * src0->ne[3]));
 }
 
 // ADD (F32, one row, same shapes, no broadcast) + RMS_NORM + MUL: nodes i, i + 1, i + 2 (the ADD result has other users)
@@ -1670,7 +1509,7 @@ static bool cl11_op_add_rms_norm_mul(cl11_device_context * c, const ggml_tensor 
     const cl11_tref a = cl11_ref(add->src[0]), b = cl11_ref(add->src[1]), wr = cl11_ref(w), sr = cl11_ref(add), d = cl11_ref(mul);
     cl11_args args(c->kernels[K_ADD_RMS_NORM_MUL]);
     args.set(a.mem).set(a.td).set(b.mem).set(b.td).set(wr.mem).set(wr.td).set(sr.mem).set(sr.td).set(d.mem).set(d.td).set(eps);
-    return cl11_launch(c, args, c->cfg.wg_row, 1);
+    return cl11_launch(c->queue, c->exec, args, c->cfg.wg_row, 1);
 }
 
 static bool cl11_op_soft_max(cl11_device_context * c, const ggml_tensor * dst) {
@@ -1696,7 +1535,7 @@ static bool cl11_op_soft_max(cl11_device_context * c, const ggml_tensor * dst) {
 
     cl11_args a(c->kernels[K_SOFT_MAX]);
     a.set(s.mem).set(s.td).set(mm.mem).set(mm.td).set(has_mask).set(mask_f16).set(d.mem).set(d.td).set(scale);
-    return cl11_launch(c, a, c->cfg.wg_row, (size_t) (src0->ne[1] * src0->ne[2] * src0->ne[3]));
+    return cl11_launch(c->queue, c->exec, a, c->cfg.wg_row, (size_t) (src0->ne[1] * src0->ne[2] * src0->ne[3]));
 }
 
 static bool cl11_op_rope(cl11_device_context * c, const ggml_tensor * dst) {
@@ -1733,7 +1572,7 @@ static bool cl11_op_rope(cl11_device_context * c, const ggml_tensor * dst) {
      .set(theta_scale).set(freq_scale).set(ext_factor).set(attn_factor).set(corr_dims[0]).set(corr_dims[1]);
 
     // one work-group per row
-    return cl11_launch(c, a, c->cfg.wg_row, (size_t) (dst->ne[1] * dst->ne[2] * dst->ne[3]));
+    return cl11_launch(c->queue, c->exec, a, c->cfg.wg_row, (size_t) (dst->ne[1] * dst->ne[2] * dst->ne[3]));
 }
 
 static bool cl11_op_get_rows(cl11_device_context * c, const ggml_tensor * dst) {
@@ -1743,7 +1582,7 @@ static bool cl11_op_get_rows(cl11_device_context * c, const ggml_tensor * dst) {
     const cl11_tref s0 = cl11_ref(src0), s1 = cl11_ref(src1), d = cl11_ref(dst);
     cl11_args a(c->kernels[K_GET_ROWS + cl11_qtype_index(src0->type)]);
     a.set(s0.mem).set(s0.td).set(s1.mem).set(s1.td).set(d.mem).set(d.td);
-    return cl11_launch(c, a, c->cfg.wg_row, (size_t) (src1->ne[0] * src1->ne[1] * src1->ne[2]));
+    return cl11_launch(c->queue, c->exec, a, c->cfg.wg_row, (size_t) (src1->ne[0] * src1->ne[1] * src1->ne[2]));
 }
 
 static bool cl11_op_set_rows(cl11_device_context * c, const ggml_tensor * dst) {
@@ -1757,7 +1596,7 @@ static bool cl11_op_set_rows(cl11_device_context * c, const ggml_tensor * dst) {
 
     cl11_args a(c->kernels[kid]);
     a.set(s0.mem).set(s0.td).set(s1.mem).set(s1.td).set(d.mem).set(d.td).set(n).set(idx64);
-    return cl11_launch(c, a, c->cfg.wg_ew, cl11_div_up(n, c->cfg.wg_ew));
+    return cl11_launch(c->queue, c->exec, a, c->cfg.wg_ew, cl11_div_up(n, c->cfg.wg_ew));
 }
 
 // two SET_ROWS with the same types in one launch (k_set_rows2_*)
@@ -1773,7 +1612,7 @@ static bool cl11_op_set_rows2(cl11_device_context * c, const ggml_tensor * da, c
     a.set(a0.mem).set(a0.td).set(a1.mem).set(a1.td).set(ad.mem).set(ad.td).set(na).set((int32_t) (da->src[1]->type == GGML_TYPE_I64 ? 1 : 0));
     a.set(b0.mem).set(b0.td).set(b1.mem).set(b1.td).set(bd.mem).set(bd.td).set(nb).set((int32_t) (db->src[1]->type == GGML_TYPE_I64 ? 1 : 0));
     a.set(groups_a);
-    return cl11_launch(c, a, c->cfg.wg_ew, groups_a + cl11_div_up(nb, c->cfg.wg_ew));
+    return cl11_launch(c->queue, c->exec, a, c->cfg.wg_ew, groups_a + cl11_div_up(nb, c->cfg.wg_ew));
 }
 
 // can the SET_ROWS `b` be computed in the same launch as `a` (which comes before it, only nodes without computation in between)?
@@ -1812,7 +1651,7 @@ static bool cl11_op_cpy(cl11_device_context * c, const ggml_tensor * dst) {
         const cl11_bcast bc = cl11_make_bcast(1, 1, tiles0, tiles1);
         cl11_args a(c->kernels[src0->type == GGML_TYPE_F16 ? K_CPY_T_F16 : K_CPY_T_F32]);
         a.set(s.mem).set(s.td).set(d.mem).set(d.td).set(bc);
-        return cl11_launch(c, a, (size_t) c->cfg.gt * c->cfg.gt, (size_t) (tiles0 * tiles1 * dst->ne[2] * dst->ne[3]));
+        return cl11_launch(c->queue, c->exec, a, (size_t) c->cfg.gt * c->cfg.gt, (size_t) (tiles0 * tiles1 * dst->ne[2] * dst->ne[3]));
     }
 
     const int kid = K_CPY_F32_F32 + (src0->type == GGML_TYPE_F16 ? 2 : 0) + (dst->type == GGML_TYPE_F16 ? 1 : 0);
@@ -1820,7 +1659,7 @@ static bool cl11_op_cpy(cl11_device_context * c, const ggml_tensor * dst) {
 
     cl11_args a(c->kernels[kid]);
     a.set(s.mem).set(s.td).set(d.mem).set(d.td).set(n);
-    return cl11_launch(c, a, c->cfg.wg_ew, cl11_div_up(n, c->cfg.wg_ew));
+    return cl11_launch(c->queue, c->exec, a, c->cfg.wg_ew, cl11_div_up(n, c->cfg.wg_ew));
 }
 
 // scratch buffer of k_xprep for the pattern `slot` (one at most 64 KiB column of src1 scaled + the sums of its groups of 16), created on first use
@@ -1937,7 +1776,7 @@ static bool cl11_mul_mat_core(cl11_device_context * c, ggml_type type, const cl1
                         const size_t wgp = std::min<size_t>(64, (size_t) c->cfg.wg_ew);
                         cl11_args ap(c->kernels[K_XPREP]);
                         ap.set(s1.mem).set(s1.td).set(scratch).set(hbit);
-                        if (!cl11_launch(c, ap, wgp, cl11_div_up((size_t) ne00 / 16, wgp))) {
+                        if (!cl11_launch(c->queue, c->exec, ap, wgp, cl11_div_up((size_t) ne00 / 16, wgp))) {
                             return false;
                         }
                         xs.valid = true;
@@ -1947,18 +1786,18 @@ static bool cl11_mul_mat_core(cl11_device_context * c, ggml_type type, const cl1
                     }
                     cl11_args a(c->kernels[K_MVRC + rk]);
                     a.set(s0.mem).set(s0.td).set(dsub).set(d.mem).set(d.td).set(bc);
-                    return cl11_launch(c, a, c->cfg.wg_mvr[rk], (size_t) tiles);
+                    return cl11_launch(c->queue, c->exec, a, c->cfg.wg_mvr[rk], (size_t) tiles);
                 }
                 xsub = nullptr; // too long for the constant memory with the sums: the general kernels
             }
             if (xsub != nullptr && !c->cfg.mvr_dn[rk]) {
                 cl11_args a(c->kernels[K_MVRC + rk]);
                 a.set(s0.mem).set(s0.td).set(xsub).set(d.mem).set(d.td).set(bc);
-                return cl11_launch(c, a, c->cfg.wg_mvr[rk], (size_t) tiles);
+                return cl11_launch(c->queue, c->exec, a, c->cfg.wg_mvr[rk], (size_t) tiles);
             }
             cl11_args a(c->kernels[K_MVR + rk]);
             a.set(s0.mem).set(s0.td).set(s1.mem).set(s1.td).set(d.mem).set(d.td).set(bc);
-            return cl11_launch(c, a, c->cfg.wg_mvr[rk], (size_t) tiles * (size_t) (ne11 * ne12 * ne13));
+            return cl11_launch(c->queue, c->exec, a, c->cfg.wg_mvr[rk], (size_t) tiles * (size_t) (ne11 * ne12 * ne13));
         }
     }
 
@@ -1969,7 +1808,7 @@ static bool cl11_mul_mat_core(cl11_device_context * c, ggml_type type, const cl1
         const cl11_bcast bc = cl11_make_bcast(r2, 1, tiles, 1);
         cl11_args a(c->kernels[K_MVQ_F16]);
         a.set(s0.mem).set(s0.td).set(s1.mem).set(s1.td).set(d.mem).set(d.td).set(bc);
-        return cl11_launch(c, a, c->cfg.wg_row, (size_t) (tiles * ne03));
+        return cl11_launch(c->queue, c->exec, a, c->cfg.wg_row, (size_t) (tiles * ne03));
     }
 
     if (ne11 <= c->mv_max_cols && !rp) {
@@ -1995,7 +1834,7 @@ static bool cl11_mul_mat_core(cl11_device_context * c, ggml_type type, const cl1
             const int family = c->mvs_family != 0 ? c->mvs_family : 2;
             cl11_args a(c->kernels[(family == 2 ? K_MVW : K_MVX) + qt]);
             a.set(s0.mem).set(s0.td).set(s1.mem).set(s1.td).set(d.mem).set(d.td).set(bc);
-            return cl11_launch(c, a, c->cfg.wg_mv, (size_t) tiles * (size_t) (ne11 * ne12 * ne13));
+            return cl11_launch(c->queue, c->exec, a, c->cfg.wg_mv, (size_t) tiles * (size_t) (ne11 * ne12 * ne13));
         }
 
         // generic mat-vec: `tpr` threads per output, the number of units of work per row bounds it
@@ -2015,7 +1854,7 @@ static bool cl11_mul_mat_core(cl11_device_context * c, ggml_type type, const cl1
 
         cl11_args a(c->kernels[K_MV + qt]);
         a.set(s0.mem).set(s0.td).set(s1.mem).set(s1.td).set(d.mem).set(d.td).set(bc).set((int32_t) tpr).set((int32_t) cl11_log2_exact(tpr));
-        return cl11_launch(c, a, c->cfg.wg_mv, cl11_div_up(total, rows_per_group));
+        return cl11_launch(c->queue, c->exec, a, c->cfg.wg_mv, cl11_div_up(total, rows_per_group));
     }
 
     // parameterized mat-mat kernels (mul_mm_x.cl), when a variant is selected
@@ -2027,7 +1866,7 @@ static bool cl11_mul_mat_core(cl11_device_context * c, ggml_type type, const cl1
         const cl11_bcast bc = cl11_make_bcast(r2, r3, tiles_m, tiles_n);
         cl11_args a(c->kernels[K_MMX + qt]);
         a.set(s0.mem).set(s0.td).set(s1.mem).set(s1.td).set(d.mem).set(d.td).set(bc);
-        return cl11_launch(c, a, (size_t) mx.nt(), groups);
+        return cl11_launch(c->queue, c->exec, a, (size_t) mx.nt(), groups);
     }
 
     // mat-mat: (4*gt) x (mm_bn*gt) tiles (src0 rows x src1 rows)
@@ -2040,7 +1879,7 @@ static bool cl11_mul_mat_core(cl11_device_context * c, ggml_type type, const cl1
 
     cl11_args a(c->kernels[K_MM + qt]);
     a.set(s0.mem).set(s0.td).set(s1.mem).set(s1.td).set(d.mem).set(d.td).set(bc);
-    return cl11_launch(c, a, (size_t) (c->cfg.gt / 2) * (c->cfg.mm_bn * c->cfg.gt / 4), groups);
+    return cl11_launch(c->queue, c->exec, a, (size_t) (c->cfg.gt / 2) * (c->cfg.mm_bn * c->cfg.gt / 4), groups);
 }
 
 static bool cl11_op_mul_mat(cl11_device_context * c, const ggml_tensor * dst) {
@@ -2054,7 +1893,7 @@ static bool cl11_op_add_id(cl11_device_context * c, const ggml_tensor * dst) {
     const int32_t n = (int32_t) ggml_nelements(dst);
     cl11_args a(c->kernels[K_ADD_ID]);
     a.set(s0.mem).set(s0.td).set(s1.mem).set(s1.td).set(s2.mem).set(s2.td).set(d.mem).set(d.td).set(n);
-    return cl11_launch(c, a, c->cfg.wg_ew, cl11_div_up(n, c->cfg.wg_ew));
+    return cl11_launch(c->queue, c->exec, a, c->cfg.wg_ew, cl11_div_up(n, c->cfg.wg_ew));
 }
 
 static bool cl11_op_ssm_conv(cl11_device_context * c, const ggml_tensor * dst) {
@@ -2062,7 +1901,7 @@ static bool cl11_op_ssm_conv(cl11_device_context * c, const ggml_tensor * dst) {
     const int32_t n = (int32_t) ggml_nelements(dst);
     cl11_args a(c->kernels[K_SSM_CONV]);
     a.set(s0.mem).set(s0.td).set(s1.mem).set(s1.td).set(d.mem).set(d.td).set(n);
-    return cl11_launch(c, a, c->cfg.wg_ew, cl11_div_up(n, c->cfg.wg_ew));
+    return cl11_launch(c->queue, c->exec, a, c->cfg.wg_ew, cl11_div_up(n, c->cfg.wg_ew));
 }
 
 static bool cl11_op_concat(cl11_device_context * c, const ggml_tensor * dst) {
@@ -2073,7 +1912,7 @@ static bool cl11_op_concat(cl11_device_context * c, const ggml_tensor * dst) {
     const int32_t o   = (int32_t) src0->ne[dim];
     cl11_args a(c->kernels[ggml_type_size(src0->type) == 4 ? K_CONCAT4 : K_CONCAT2]);
     a.set(s0.mem).set(s0.td).set(s1.mem).set(s1.td).set(d.mem).set(d.td).set(n).set(dim).set(o);
-    return cl11_launch(c, a, c->cfg.wg_ew, cl11_div_up(n, c->cfg.wg_ew));
+    return cl11_launch(c->queue, c->exec, a, c->cfg.wg_ew, cl11_div_up(n, c->cfg.wg_ew));
 }
 
 // must match `padp` in src/backends/opencl11/kernels/moe_ops.cl
@@ -2100,7 +1939,7 @@ static bool cl11_op_pad(cl11_device_context * c, const ggml_tensor * dst) {
     const int32_t n = (int32_t) ggml_nelements(dst);
     cl11_args a(c->kernels[K_PAD]);
     a.set(s0.mem).set(s0.td).set(d.mem).set(d.td).set(n).set(pp);
-    return cl11_launch(c, a, c->cfg.wg_ew, cl11_div_up(n, c->cfg.wg_ew));
+    return cl11_launch(c->queue, c->exec, a, c->cfg.wg_ew, cl11_div_up(n, c->cfg.wg_ew));
 }
 
 static bool cl11_op_sum_rows(cl11_device_context * c, const ggml_tensor * dst) {
@@ -2109,7 +1948,7 @@ static bool cl11_op_sum_rows(cl11_device_context * c, const ggml_tensor * dst) {
     const size_t lsz = (size_t) std::min(c->cfg.wg_row, std::max(32, 1 << cl11_log2_exact((int) std::min<int64_t>(src0->ne[0], 1 << 20))));
     cl11_args a(c->kernels[K_SUM_ROWS]);
     a.set(s0.mem).set(s0.td).set(d.mem).set(d.td);
-    return cl11_launch(c, a, lsz, (size_t) (src0->ne[1] * src0->ne[2] * src0->ne[3]));
+    return cl11_launch(c->queue, c->exec, a, lsz, (size_t) (src0->ne[1] * src0->ne[2] * src0->ne[3]));
 }
 
 static bool cl11_op_argsort(cl11_device_context * c, const ggml_tensor * dst) {
@@ -2120,7 +1959,7 @@ static bool cl11_op_argsort(cl11_device_context * c, const ggml_tensor * dst) {
     const size_t  lsz  = (size_t) std::min<int64_t>(c->cfg.wg_row, std::max<int64_t>(32, npad / 2));
     cl11_args a(c->kernels[K_ARGSORT]);
     a.set(s0.mem).set(s0.td).set(d.mem).set(d.td).set(npad).set(desc);   // no local-memory argument: see k_argsort (Mesa Clover)
-    return cl11_launch(c, a, lsz, (size_t) (src0->ne[1] * src0->ne[2] * src0->ne[3]));
+    return cl11_launch(c->queue, c->exec, a, lsz, (size_t) (src0->ne[1] * src0->ne[2] * src0->ne[3]));
 }
 
 // ---- MUL_MAT_ID: dst[:, i, t] = src0[:, :, ids[i, t]] * src1[:, i % ne11, t] ----
@@ -2241,7 +2080,7 @@ static bool cl11_op_mul_mat_id_sync(cl11_device_context * c, const ggml_tensor *
     {
         cl11_args a(c->kernels[K_MID_GATHER]);
         a.set(s1.mem).set(s1.td).set(c->mid_gather.buf).set(c->mid_pairs.buf).set((int32_t) K).set((int32_t) src1->ne[1]);
-        if (!cl11_launch(c, a, (size_t) c->cfg.wg_row, (size_t) P)) {
+        if (!cl11_launch(c->queue, c->exec, a, (size_t) c->cfg.wg_row, (size_t) P)) {
             return false;
         }
     }
@@ -2267,7 +2106,7 @@ static bool cl11_op_mul_mat_id_sync(cl11_device_context * c, const ggml_tensor *
     {
         cl11_args a(c->kernels[K_MID_SCATTER]);
         a.set(c->mid_out.buf).set(d.mem).set(d.td).set(c->mid_pairs.buf).set((int32_t) M);
-        if (!cl11_launch(c, a, (size_t) c->cfg.wg_row, (size_t) P)) {
+        if (!cl11_launch(c->queue, c->exec, a, (size_t) c->cfg.wg_row, (size_t) P)) {
             return false;
         }
     }
@@ -2315,7 +2154,7 @@ static int cl11_op_mul_mat_id_gen(cl11_device_context * c, const ggml_tensor * d
         const cl11_bcast bc = cl11_make_bcast(1, 1, tiles, 1);
         cl11_args a(c->kernels[K_MVRI + rk]);
         a.set(s0.mem).set(s0.td).set(s1.mem).set(tb).set(d.mem).set(d.td).set(bc).set(ir.mem).set(ir.td);
-        return cl11_launch(c, a, c->cfg.wg_mvr[rk], (size_t) tiles * (size_t) n_cols) ? 1 : -1;
+        return cl11_launch(c->queue, c->exec, a, c->cfg.wg_mvr[rk], (size_t) tiles * (size_t) n_cols) ? 1 : -1;
     }
 
     // F32 / F16 experts: the generic mat-vec, `tpr` threads per output
@@ -2334,7 +2173,7 @@ static int cl11_op_mul_mat_id_gen(cl11_device_context * c, const ggml_tensor * d
     const cl11_bcast bc = cl11_make_bcast(1, 1, 1, 1);
     cl11_args a(c->kernels[K_MVI + qt]);
     a.set(s0.mem).set(s0.td).set(s1.mem).set(tb).set(d.mem).set(d.td).set(bc).set((int32_t) tpr).set((int32_t) cl11_log2_exact(tpr)).set(ir.mem).set(ir.td);
-    return cl11_launch(c, a, c->cfg.wg_mv, cl11_div_up(total, rows_per_group)) ? 1 : -1;
+    return cl11_launch(c->queue, c->exec, a, c->cfg.wg_mv, cl11_div_up(total, rows_per_group)) ? 1 : -1;
 }
 
 static bool cl11_op_mul_mat_id(cl11_device_context * c, const ggml_tensor * dst) {
@@ -2408,7 +2247,7 @@ static int cl11_op_mul_mat_multi(cl11_device_context * c, ggml_tensor * const * 
     a.set(sa[0].td).set(sa[1].td).set(sa[2].td).set(dd[0].td).set(dd[1].td).set(dd[2].td);
     a.set(bc[0]).set(bc[1]).set(bc[2]);
     a.set(s1.mem).set(s1.td);
-    return cl11_launch(c, a, (size_t) c->cfg.wg_mvr[rk], groups) ? 1 : -1;
+    return cl11_launch(c->queue, c->exec, a, (size_t) c->cfg.wg_mvr[rk], groups) ? 1 : -1;
 }
 
 // MUL_MAT(CONT(transposed F16 view), x) with a single column x: the CONT is skipped, see k_mvt_f16
@@ -2422,13 +2261,13 @@ static bool cl11_op_mul_mat_t(cl11_device_context * c, const ggml_tensor * dst, 
         const cl11_bcast bcg = cl11_make_bcast(src1->ne[2] / a->ne[2], src1->ne[3] / a->ne[3], tiles, 1);
         cl11_args ag(c->kernels[K_MVT_G_F16]);
         ag.set(s0.mem).set(s0.td).set(s1.mem).set(s1.td).set(d.mem).set(d.td).set(bcg);
-        return cl11_launch(c, ag, c->cfg.wg_row, (size_t) tiles * (size_t) (src1->ne[1] * src1->ne[2] * src1->ne[3]));
+        return cl11_launch(c->queue, c->exec, ag, c->cfg.wg_row, (size_t) tiles * (size_t) (src1->ne[1] * src1->ne[2] * src1->ne[3]));
     }
     const cl11_bcast bc = cl11_make_bcast(src1->ne[2] / a->ne[2], 1, 1, 1);
 
     cl11_args args(c->kernels[K_MVT_F16]);
     args.set(s0.mem).set(s0.td).set(s1.mem).set(s1.td).set(d.mem).set(d.td).set(bc);
-    return cl11_launch(c, args, c->cfg.wg_att, (size_t) a->ne[3]);
+    return cl11_launch(c->queue, c->exec, args, c->cfg.wg_att, (size_t) a->ne[3]);
 }
 
 // can the CONT node i be skipped because the (only) MUL_MAT that uses it reads the transposed view directly?
@@ -2517,13 +2356,13 @@ static const char * ggml_backend_cl11_get_name(ggml_backend_t backend) {
 
 static void ggml_backend_cl11_free(ggml_backend_t backend) {
     auto * bctx = (cl11_backend_context *) backend->context;
-    if (bctx->dctx->profile) {
+    if (bctx->dctx->exec.profile) {
         std::lock_guard<std::mutex> lock(bctx->dctx->mutex);
         if (bctx->dctx->queue) {
             clFinish(bctx->dctx->queue);
-            cl11_prof_collect(bctx->dctx);
+            cl11_prof_collect(bctx->dctx->exec);
         }
-        cl11_prof_print(bctx->dctx);
+        cl11_prof_print(bctx->dctx->exec, bctx->dctx->name.c_str());
     }
     delete bctx;
     delete backend;
@@ -2565,7 +2404,7 @@ static enum ggml_status ggml_backend_cl11_graph_compute(ggml_backend_t backend, 
     }
     c->mid_ids.valid = false;
     std::vector<const ggml_tensor *> skipped_conts;
-    const size_t launches_before = c->n_launches;
+    const size_t launches_before = c->exec.n_launches;
     for (int i = 0; i < cgraph->n_nodes; ++i) {
         ggml_tensor * node = cgraph->nodes[i];
 
@@ -2589,9 +2428,9 @@ static enum ggml_status ggml_backend_cl11_graph_compute(ggml_backend_t backend, 
             continue;
         }
         if (node->op == GGML_OP_MUL_MAT && std::find(skipped_conts.begin(), skipped_conts.end(), node->src[0]) != skipped_conts.end()) {
-            if (c->profile) {
-                c->prof_key = cl11_prof_key(c, c->cfg.mvt_groups ? "MUL_MAT f16 transposed (CONT skipped, many groups)" : "MUL_MAT f16 transposed (CONT skipped)");
-                c->prof_stats[c->prof_key].count++;
+            if (c->exec.profile) {
+                c->exec.prof_key = cl11_prof_key(c->exec, c->cfg.mvt_groups ? "MUL_MAT f16 transposed (CONT skipped, many groups)" : "MUL_MAT f16 transposed (CONT skipped)");
+                c->exec.prof_stats[c->exec.prof_key].count++;
             }
             if (!cl11_op_mul_mat_t(c, node, node->src[0]->src[0])) {
                 GGML_LOG_ERROR("%s: failed to compute node %d (%s, %s)\n", __func__, i, ggml_op_desc(node), node->name);
@@ -2612,12 +2451,12 @@ static enum ggml_status ggml_backend_cl11_graph_compute(ggml_backend_t backend, 
                 group[n_group++] = next;
             }
             if (n_group >= 2) {
-                if (c->profile) {
+                if (c->exec.profile) {
                     std::string key = std::string("MUL_MAT ") + ggml_type_name(node->src[0]->type) + " mv multi x" + std::to_string(n_group) + " (fused)";
-                    c->prof_key = cl11_prof_key(c, key);
-                    c->prof_stats[c->prof_key].count++;
+                    c->exec.prof_key = cl11_prof_key(c->exec, key);
+                    c->exec.prof_stats[c->exec.prof_key].count++;
                     for (int j = 0; j < n_group; ++j) {
-                        c->prof_stats[c->prof_key].bytes += (double) ggml_nbytes(group[j]->src[0]);
+                        c->exec.prof_stats[c->exec.prof_key].bytes += (double) ggml_nbytes(group[j]->src[0]);
                     }
                 }
                 const int r = cl11_op_mul_mat_multi(c, group, n_group);
@@ -2632,8 +2471,8 @@ static enum ggml_status ggml_backend_cl11_graph_compute(ggml_backend_t backend, 
                     i += n_group - 1;
                     continue;
                 }
-                if (c->profile) {
-                    c->prof_stats[c->prof_key].count--; // not fused after all
+                if (c->exec.profile) {
+                    c->exec.prof_stats[c->exec.prof_key].count--; // not fused after all
                 }
             }
         }
@@ -2645,9 +2484,9 @@ static enum ggml_status ggml_backend_cl11_graph_compute(ggml_backend_t backend, 
                 ++j;
             }
             if (j < cgraph->n_nodes && cl11_can_pair_set_rows(c, node, cgraph->nodes[j])) {
-                if (c->profile) {
-                    c->prof_key = cl11_prof_key(c, std::string("SET_ROWS ") + ggml_type_name(node->src[0]->type) + "->" + ggml_type_name(node->type) + " x2 (fused)");
-                    c->prof_stats[c->prof_key].count++;
+                if (c->exec.profile) {
+                    c->exec.prof_key = cl11_prof_key(c->exec, std::string("SET_ROWS ") + ggml_type_name(node->src[0]->type) + "->" + ggml_type_name(node->type) + " x2 (fused)");
+                    c->exec.prof_stats[c->exec.prof_key].count++;
                 }
                 if (!cl11_op_set_rows2(c, node, cgraph->nodes[j])) {
                     GGML_LOG_ERROR("%s: failed to compute node %d (%s, %s) with the next SET_ROWS\n", __func__, i, ggml_op_desc(node), node->name);
@@ -2663,9 +2502,9 @@ static enum ggml_status ggml_backend_cl11_graph_compute(ggml_backend_t backend, 
         if (node->op == GGML_OP_ADD) {
             const ggml_tensor * w = nullptr;
             if (cl11_can_fuse_add_norm_mul(c, cgraph, i, &w)) {
-                if (c->profile) {
-                    c->prof_key = cl11_prof_key(c, "ADD+RMS_NORM+MUL (fused)");
-                    c->prof_stats[c->prof_key].count++;
+                if (c->exec.profile) {
+                    c->exec.prof_key = cl11_prof_key(c->exec, "ADD+RMS_NORM+MUL (fused)");
+                    c->exec.prof_stats[c->exec.prof_key].count++;
                 }
                 if (!cl11_op_add_rms_norm_mul(c, node, cgraph->nodes[i + 1], w, cgraph->nodes[i + 2])) {
                     GGML_LOG_ERROR("%s: failed to compute node %d (%s, %s)\n", __func__, i, ggml_op_desc(node), node->name);
@@ -2679,9 +2518,9 @@ static enum ggml_status ggml_backend_cl11_graph_compute(ggml_backend_t backend, 
         // RMS_NORM + MUL (norm weights) in one kernel
         if (node->op == GGML_OP_RMS_NORM) {
             if (const ggml_tensor * w = cl11_norm_mul_weights(c, cgraph, i)) {
-                if (c->profile) {
-                    c->prof_key = cl11_prof_key(c, "RMS_NORM+MUL (fused)");
-                    c->prof_stats[c->prof_key].count++;
+                if (c->exec.profile) {
+                    c->exec.prof_key = cl11_prof_key(c->exec, "RMS_NORM+MUL (fused)");
+                    c->exec.prof_stats[c->exec.prof_key].count++;
                 }
                 if (!cl11_op_rms_norm_mul(c, node, w, cgraph->nodes[i + 1])) {
                     GGML_LOG_ERROR("%s: failed to compute node %d (%s, %s)\n", __func__, i, ggml_op_desc(node), node->name);
@@ -2692,7 +2531,7 @@ static enum ggml_status ggml_backend_cl11_graph_compute(ggml_backend_t backend, 
             }
         }
 
-        if (c->profile) {
+        if (c->exec.profile) {
             std::string key = ggml_op_desc(node);
             if (node->op == GGML_OP_MUL_MAT) {
                 key += std::string(" ") + ggml_type_name(node->src[0]->type) + (node->src[1]->ne[1] <= c->mv_max_cols ? " mv" : " mm");
@@ -2707,10 +2546,10 @@ static enum ggml_status ggml_backend_cl11_graph_compute(ggml_backend_t backend, 
                         s0 ? (long long) s0->ne[2] : 0, s0 ? (long long) s0->ne[3] : 0, s0 ? s0->nb[0] : 0, s0 ? s0->nb[1] : 0, s0 ? s0->nb[2] : 0, s0 ? s0->nb[3] : 0);
                 key += buf;
             }
-            c->prof_key = cl11_prof_key(c, key);
-            c->prof_stats[c->prof_key].count++;
+            c->exec.prof_key = cl11_prof_key(c->exec, key);
+            c->exec.prof_stats[c->exec.prof_key].count++;
             if (node->op == GGML_OP_MUL_MAT) {
-                c->prof_stats[c->prof_key].bytes += (double) ggml_nbytes(node->src[0]);
+                c->exec.prof_stats[c->exec.prof_key].bytes += (double) ggml_nbytes(node->src[0]);
             }
         }
 
@@ -2720,7 +2559,7 @@ static enum ggml_status ggml_backend_cl11_graph_compute(ggml_backend_t backend, 
         }
     }
 
-    if (c->launch_log) {
+    if (c->exec.launch_log) {
         // the number of kernels of a graph does not depend on the GPU: the same count can be compared on any device
         int n_mul_mat = 0;
         int64_t n_cols = 0;
@@ -2731,14 +2570,14 @@ static enum ggml_status ggml_backend_cl11_graph_compute(ggml_backend_t backend, 
             }
         }
         fprintf(stderr, "cl11 launches: nodes %d, mul_mat %d (max columns %lld), kernels %zu\n", cgraph->n_nodes, n_mul_mat, (long long) n_cols,
-                c->n_launches - launches_before);
+                c->exec.n_launches - launches_before);
     }
 
     // submit the commands, but do not wait for them
     clFlush(c->queue);
-    if (c->profile) {
+    if (c->exec.profile) {
         clFinish(c->queue);
-        cl11_prof_collect(c);
+        cl11_prof_collect(c->exec);
     }
     return GGML_STATUS_SUCCESS;
 }

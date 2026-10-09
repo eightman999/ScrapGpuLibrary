@@ -64,7 +64,7 @@ enum cl11_amd_gen {
     CL11_AMD_UNKNOWN, // AMD, generation not determined
 };
 
-cl11_amd_gen cl11_amd_generation(const cl11_device_info & info) {
+static cl11_amd_gen cl11_amd_generation(const cl11_device_info & info) {
     const std::string lname   = cl11_lower(info.name);
     const std::string lvendor = cl11_lower(info.vendor);
     const bool amd = lvendor.find("amd") != std::string::npos || lvendor.find("advanced micro") != std::string::npos ||
