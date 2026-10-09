@@ -438,6 +438,9 @@ stage_dn_bench() {
 #
 stage_regress() {
     csv_header "$OUT/regress.csv" "gpu,test_passed,test_total,platform,greedy_q8,greedy_q4k,q8_pp,q8_tg,q4k_pp,q4k_tg"
+    # the regress stage also appends rows to greedy.csv and bench.csv: write their headers when it runs without the greedy / bench stages
+    csv_header "$OUT/greedy.csv" "gpu,model,config,identical,kernels_per_token"
+    csv_header "$OUT/bench.csv" "gpu,model,config,pp128,tg64"
     local gpu g lf pt plat want
     IFS=',' read -ra gpu_list <<< "$REGRESS_GPUS"
     for gpu in "${gpu_list[@]}"; do

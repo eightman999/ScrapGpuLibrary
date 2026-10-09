@@ -37,6 +37,7 @@
 | Mesa（Clover / rusticl） | `CL_DEVICE_MAX_MEM_ALLOC_SIZE` を超える `clCreateBuffer` を `CL_INVALID_BUFFER_SIZE` で拒否する（NVIDIA 390 と逆） | AMD では公称上限を厳守し、上限を超えるテンソルは CPU に回す |
 | Mesa（WX 2100） | 空カーネルの連続起動に rusticl で約 100µs、Clover で約 15〜20µs かかる。CL11 の生成中はメモリクロックが 300 / 625 / 1500 MHz を行き来する（Vulkan では 1500 MHz に張り付く） | 生成はディスパッチ回数で頭打ちになる。速い既存バックエンド（Vulkan）を使う |
 | Mesa Clover（WX 2100） | 1 回の起動コストが、そのカーネルを含む**プログラムの大きさに比例して**増える。空カーネルの `clEnqueueNDRangeKernel` は、同じプログラムに空のカーネルを +0 / +50 / +200 個足すと 1 回 5 / 24 / 104µs（rusticl は大きさによらず一定）。CL11 の全カーネルを 1 つのプログラムに入れると、1 トークン約 750 起動がこのコストを払う | Clover ではプログラムを decode 用 / 行列積用 / K-quant 用の 3 つに分ける（`split_programs`。`GGML_CL11_SPLIT_PROGRAMS=0/1` で切り替え）。Qwen3-0.6B Q8_0 の tg64 が 16.2 → 22.7 t/s（pp128 は 320 → 345 t/s）。rusticl と NVIDIA は分けない |
+| Mesa Clover（25.0.7、WX 2100） | 値渡しの構造体の引数のあとにローカルメモリの引数（`clSetKernelArg(..., size, NULL)`）があると、引数の位置がずれる。カーネルは出力先などのポインタを誤って読み、結果が壊れたり別の領域に書き込んだりする（pyopencl の最小カーネルで再現。構造体のないカーネルや rusticl では起きない） | ローカルメモリの引数を使わず、カーネル内の固定長配列にする（CL11 の `k_argsort`。大きさはビルド時に `SORT_NMAX` で渡す） |
 | Mesa Clover（25.0.7、kernel 6.12、RX 6400） | 2 回目のカーネル起動で GPU がハングする（`amdgpu: The CS has cancelled because the context is lost`）。自明なカーネルでも再現 | Clover は使わない。AMD の OpenCL は rusticl（`RUSTICL_ENABLE=radeonsi`）を使う |
 | Mesa rusticl（RX 6400） | 空カーネルでも in-order キューで 1 起動あたり約 13.8µs（ホスト側の enqueue は約 4.6µs）。1 トークン約 900 起動なので、それだけで約 12ms の下限になる | 起動数を減らす（融合）。速い既存バックエンド（Vulkan）があればそちらを使う |
 | Fermi 全般 | グリッドの各次元が 65535 まで | カーネルは 2 次元の NDRange で起動し、グループ番号を自分で線形化する |
