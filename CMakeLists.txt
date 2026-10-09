@@ -23,6 +23,9 @@ endif()
 if (SCRAPGPU_BUILD_CORE)
     add_library(scrapgpu_core
         src/core/op.cpp
+        src/core/ref/f16.cpp
+        src/core/ref/ops.cpp
+        src/core/ref/quant.cpp
         src/core/registry.cpp
         src/core/status.cpp
         src/core/tensor.cpp)
@@ -84,6 +87,14 @@ if (SCRAPGPU_BUILD_TESTS AND SCRAPGPU_BUILD_CORE)
     target_link_libraries(scrapgpu_tensor_tests PRIVATE scrapgpu_tensor)
     target_include_directories(scrapgpu_tensor_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/backends")
     add_test(NAME scrapgpu_tensor_tests COMMAND scrapgpu_tensor_tests)
+
+    add_executable(scrapgpu_ref_ops_tests tests/ref/ref_ops_tests.cpp)
+    target_link_libraries(scrapgpu_ref_ops_tests PRIVATE scrapgpu_core)
+    add_test(NAME scrapgpu_ref_ops_tests COMMAND scrapgpu_ref_ops_tests)
+
+    add_executable(scrapgpu_ref_quant_tests tests/ref/ref_quant_tests.cpp)
+    target_link_libraries(scrapgpu_ref_quant_tests PRIVATE scrapgpu_core)
+    add_test(NAME scrapgpu_ref_quant_tests COMMAND scrapgpu_ref_quant_tests)
 
     add_test(NAME scrapgpu_dependency_check
         COMMAND "${CMAKE_COMMAND}" -DROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_core_dependencies.cmake")

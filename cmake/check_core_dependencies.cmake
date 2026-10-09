@@ -14,6 +14,11 @@ file(GLOB_RECURSE SCRAPGPU_TENSOR_SOURCES
     "${ROOT_DIR}/src/tensor/*.hpp"
     "${ROOT_DIR}/src/tensor/*.c"
     "${ROOT_DIR}/src/tensor/*.cpp")
+file(GLOB_RECURSE SCRAPGPU_CORE_TESTS
+    "${ROOT_DIR}/tests/ref/*.h"
+    "${ROOT_DIR}/tests/ref/*.hpp"
+    "${ROOT_DIR}/tests/ref/*.c"
+    "${ROOT_DIR}/tests/ref/*.cpp")
 file(GLOB_RECURSE SCRAPGPU_OPENCL11_SOURCES
     "${ROOT_DIR}/src/backends/opencl11/*.h"
     "${ROOT_DIR}/src/backends/opencl11/*.hpp"
@@ -21,7 +26,7 @@ file(GLOB_RECURSE SCRAPGPU_OPENCL11_SOURCES
     "${ROOT_DIR}/src/backends/opencl11/*.cpp")
 
 set(FORBIDDEN_PATTERN "#[ \t]*include[ \t]*[<\"]([^>\"]*(ggml|CL/cl\\.h|OpenCL/opencl\\.h|torch|onnxruntime)[^>\"]*)[>\"]")
-foreach (FILE IN LISTS SCRAPGPU_PUBLIC_HEADERS SCRAPGPU_CORE_SOURCES SCRAPGPU_TENSOR_SOURCES)
+foreach (FILE IN LISTS SCRAPGPU_PUBLIC_HEADERS SCRAPGPU_CORE_SOURCES SCRAPGPU_TENSOR_SOURCES SCRAPGPU_CORE_TESTS)
     file(READ "${FILE}" CONTENT)
     if (CONTENT MATCHES "${FORBIDDEN_PATTERN}")
         message(FATAL_ERROR "Forbidden dependency include in ${FILE}: ${CMAKE_MATCH_1}")

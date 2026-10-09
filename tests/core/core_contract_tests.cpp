@@ -99,7 +99,8 @@ void test_op_validation() {
     validate(SCRAPGPU_OP_ROPE, &f16, 1, &out, 1, &rope, sizeof(rope));
     validate(SCRAPGPU_OP_SOFT_MAX, &f32, 1, &out, 1, &softmax, sizeof(softmax));
     validate(SCRAPGPU_OP_GET_ROWS, rows, 2, &out, 1, &get_rows, sizeof(get_rows));
-    validate(SCRAPGPU_OP_SET_ROWS, in2, 3, &out, 1, &set_rows, sizeof(set_rows));
+    scrapgpu_tensor_desc set_rows_in[2] = {f32, i32};
+    validate(SCRAPGPU_OP_SET_ROWS, set_rows_in, 2, &out, 1, &set_rows, sizeof(set_rows));
     validate(SCRAPGPU_OP_CPY, &f16, 1, &out, 1, &cpy, sizeof(cpy));
     validate(SCRAPGPU_OP_DUP, &f16, 1, &out, 1, nullptr, 0);
     validate(SCRAPGPU_OP_CONT, &f16, 1, &out, 1, nullptr, 0);
