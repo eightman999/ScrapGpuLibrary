@@ -302,6 +302,24 @@ Step 5 done (2026-10-09): moved header-only `cl11_args`, `cl11_launch`, `cl11_di
 
 Phase 2 implemented (2026-10-09): OpenCL runtime device probing/tuning (`device.*`), lazy context/error/profile flag setup (`context.*`), kernel table/program build/source embedding (`kernels.*`, `opencl11_kernels.cmake`), buffer allocation/probe/limits/constant sub-buffer cache (`buffer.*`), and executor launch/profiling/fill helpers (`executor.h`) are now in `src/backends/opencl11/` with no ggml includes. The ggml adapter remains the Phase 3 owner of ggml API registration, op translation/dispatch, fusion planning, tensor descriptor construction, R32 repack layout transfer, scratch lifetime tied to ggml graph execution, and compatibility public `ggml_backend_cl11_*` entry points.
 
+### Gate 2 の判定（2026-10-09、`ccde9c3`）
+
+**Go**。`docs/BASELINES.md` の全項目を満たした。TB250 は `sweep.sh STAGES="build regress summary" BENCH_REPS=5`（結果は TB250 の `~/bench/scrapgpu-v02s/sweep-out/gate2-ccde9c3`）。
+
+| GPU | test-backend-ops | greedy（Q8_0 / Q4_K_M） | 起動回数 / トークン（Q8_0 / Q4_K_M） | Q8_0 pp128 / tg64 | Q4_K_M pp128 / tg64 |
+| --- | --- | --- | --- | --- | --- |
+| GT 430 | 3441 / 3442 | 一致 / 一致 | 564 / 662（同じ） | 89.4 / 22.3（±0.0%） | 89.9 / 23.7（±0.0%） |
+| GT 730 | 3441 / 3442 | 一致 / 一致 | 452 / 466（同じ） | 242.1 / 34.8（+0.2% / 0.0%） | 231.5 / 39.2（+0.1% / +0.3%） |
+| GT 710 | 3442 / 3442 | 一致 / 一致 | 452 / 466（同じ） | 120.0 / 14.7（−0.2% / 0.0%） | 116.0 / 17.8（−0.9% / 0.0%） |
+| WX 2100 Clover | 3435 / 3435 | 一致 / 一致 | 564 / 564（同じ） | 334.1 / 21.8（0.0% / +1.4%） | 338.6 / 18.5（+1.5% / −0.5%） |
+| WX 2100 rusticl | 3435 / 3435 | 一致 / 一致 | 564 / 564（同じ） | 446.5 / 14.9（−1.2% / −1.3%） | 435.8 / 15.4（0.0% / 0.0%） |
+| RX 6400 rusticl | 3442 / 3442 | 一致 / 一致 | 564 / 564（同じ） | 913.8 / 19.8（−0.4% / −1.0%） | 928.4 / 23.7（−0.9% / −1.7%） |
+
+- NVIDIA の差は最大 −0.9%（±3% 以内）、AMD は `tol_pct` 以内。GT 430 / GT 730 で落ちる 1 件は基準と同じ（VRAM に入らない 1 GiB の `MUL_MAT_HADAMARD`）。
+- Mac（M2 Max）：`test-backend-ops -b CL11_0` が既定・`FORCE_GEN=kepler`・`FORCE_GEN=fermi` でいずれも 3406 / 3406。in-tree ビルド（b11384 に `install-in-tree.sh`）でも主要 op が通る。
+- 各ステップで `clBuildProgram` に渡すソースとオプションが分割前とバイト単位で同じことを、Mac で確認した（既定・kepler・fermi の調整）。
+- Phase 3 に持ち越す点：バックエンド側のエラー出力が ggml のログではなく `stderr` になった（ログのコールバックを入れる）。`install-in-tree.sh` は、別の git リポジトリの中にあるディレクトリーに対して実行すると、パッチを「適用済み」と誤判定する（分割前からの挙動）。
+
 ## 6. リスクと未決
 
 | 項目 | リスク | 未決 / 提案 |
