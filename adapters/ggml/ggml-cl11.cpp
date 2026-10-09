@@ -26,6 +26,7 @@
 #include "ggml-impl.h"
 #include "ggml-backend-impl.h"
 
+#include "opencl11/buffer.h"
 #include "opencl11/context.h"
 #include "opencl11/device.h"
 #include "opencl11/kernels.h"
@@ -48,14 +49,8 @@
 // offsets from this dummy (non-null, page aligned) pointer.
 #define CL11_BASE ((void *) 0x1000)
 
-// largest cl_mem (and buffer) size: the kernels address a buffer with 32-bit signed byte offsets
-#define CL11_MAX_BUFFER_SIZE ((size_t) 0x7ffff000)
-
-// the tensors have to be aligned for the vector loads of the kernels (and for CL11_BASE)
-#define CL11_MIN_ALIGNMENT 256
-
 // Device information, context creation and kernel/program helpers live in src/backends/opencl11/.
-// ggml keeps the device-context wrapper until later Phase 2 steps move buffer/executor state.
+// ggml keeps the buffer wrapper and executor state until later Phase 2 steps move them.
 
 // tensor descriptor passed to the kernels by value, must match `tdesc` in src/backends/opencl11/kernels/common.cl
 struct cl11_td {
@@ -149,13 +144,7 @@ struct cl11_device_context {
     bool strict_alloc_dev = false; // cl11_tuning::strict_alloc: like GGML_CL11_STRICT_ALLOC=1, and supports_op rejects tensors above the limit
 
     // sub-buffers of src1 for the constant memory (key: parent, offset, size); released with the parent buffer
-    struct const_sub {
-        cl_mem   parent;
-        size_t   offset;
-        size_t   size;
-        cl_mem   sub;
-    };
-    std::vector<const_sub> const_subs;
+    std::vector<cl11_const_sub_entry> const_subs;
 
     // src1 prepared by k_xprep for the "denormal products" mat-vec kernels: one scratch buffer per pattern (Q4_0, Q4_K, Q6_K; scaled copy of the
     // column + sums of groups of 16) and the column each one holds now
@@ -1060,6 +1049,7 @@ static bool cl11_rp_transfer(cl11_device_context * c, cl_mem mem, const ggml_ten
     return true;
 }
 
+// Compatibility shim until Step 5 moves the executor: fill planning is backend-owned, but launching still uses cl11_args/cl11_launch here.
 // memset of a range of a buffer with a kernel (OpenCL 1.2 clEnqueueFillBuffer is not allowed)
 static bool cl11_fill(cl11_device_context * c, cl_mem mem, size_t offset, size_t size, uint8_t value) {
     if (size == 0) {
@@ -1070,9 +1060,10 @@ static bool cl11_fill(cl11_device_context * c, cl_mem mem, size_t offset, size_t
     }
 
     const uint32_t pattern = 0x01010101u * (uint32_t) value;
-    const size_t head = std::min(size, (4 - offset % 4) % 4);
-    const size_t body = (size - head) / 4;
-    const size_t tail = size - head - body * 4;
+    cl11_fill_span head = {};
+    cl11_fill_span body = {};
+    cl11_fill_span tail = {};
+    cl11_fill_plan(offset, size, head, body, tail);
 
     auto fill_bytes = [&](size_t off, size_t n) -> bool {
         if (n == 0) {
@@ -1083,37 +1074,29 @@ static bool cl11_fill(cl11_device_context * c, cl_mem mem, size_t offset, size_t
         return cl11_launch(c, a, c->cfg.wg_ew, cl11_div_up(n, c->cfg.wg_ew));
     };
 
-    if (!fill_bytes(offset, head)) {
+    if (!fill_bytes(head.offset, head.count)) {
         return false;
     }
-    if (body > 0) {
+    if (body.count > 0) {
         // the work-items address the buffer with int offsets: split very large fills
         const size_t chunk = 1u << 28; // words
-        for (size_t done = 0; done < body; done += chunk) {
-            const size_t n = std::min(chunk, body - done);
+        for (size_t done = 0; done < body.count; done += chunk) {
+            const size_t n = std::min(chunk, body.count - done);
             cl11_args b(c->kernels[K_FILL_U32]);
-            b.set(mem).set((int32_t) (offset + head + done * 4)).set((int32_t) n).set((cl_uint) pattern);
+            b.set(mem).set((int32_t) (body.offset + done * 4)).set((int32_t) n).set((cl_uint) pattern);
             if (!cl11_launch(c, b, c->cfg.wg_ew, cl11_div_up(n, c->cfg.wg_ew))) {
                 return false;
             }
         }
     }
-    return fill_bytes(offset + head + body * 4, tail);
+    return fill_bytes(tail.offset, tail.count);
 }
 
 static void ggml_backend_cl11_buffer_free_buffer(ggml_backend_buffer_t buffer) {
     auto * bctx = (cl11_buffer_context *) buffer->context;
     {
         std::lock_guard<std::mutex> lock(bctx->dctx->mutex);
-        auto & subs = bctx->dctx->const_subs;
-        // newest first: the NVIDIA 390 driver crashes in clReleaseMemObject when overlapping sub-buffers of one buffer are released in the
-        // order of their creation (the sub-buffers of the columns of src1 overlap, as llama-perplexity -b 1 shows)
-        for (size_t i = subs.size(); i-- > 0;) {
-            if (subs[i].parent == bctx->mem) {
-                clReleaseMemObject(subs[i].sub);
-                subs.erase(subs.begin() + i);
-            }
-        }
+        cl11_release_const_subs_for_parent(bctx->dctx->const_subs, bctx->mem);
     }
     if (bctx->mem) {
         clReleaseMemObject(bctx->mem);
@@ -1241,90 +1224,21 @@ static const ggml_backend_buffer_i ggml_backend_cl11_buffer_i = {
 // buffer type
 //
 
-// nominal limit of a cl_mem (what get_max_size reports, ggml-alloc splits the buffers with it)
-static size_t cl11_max_buffer_size(const cl11_device_context * c) {
-    return std::min(c->info.max_alloc, CL11_MAX_BUFFER_SIZE);
-}
-
-// GGML_CL11_STRICT_ALLOC=1: never allocate more than CL_DEVICE_MAX_MEM_ALLOC_SIZE in one buffer
-static bool cl11_strict_alloc() {
-    static const bool strict = [] {
-        const char * env = getenv("GGML_CL11_STRICT_ALLOC");
-        return env != nullptr && atoi(env) != 0;
-    }();
-    return strict;
-}
-
-// limit of alloc_buffer: some drivers (NVIDIA 390) accept buffers larger than CL_DEVICE_MAX_MEM_ALLOC_SIZE,
-// so a single tensor that is larger than the nominal limit (e.g. the logits) can still be allocated.
-// Never more than the global memory, and never more than what the 32-bit offsets of the kernels can address.
-static size_t cl11_max_alloc_size(const cl11_device_context * c) {
-    if (cl11_strict_alloc() || c->strict_alloc_dev) {
-        return cl11_max_buffer_size(c);
-    }
-    return std::min(std::max(c->info.global_mem, c->info.max_alloc), CL11_MAX_BUFFER_SIZE);
-}
-
 static const char * ggml_backend_cl11_buft_get_name(ggml_backend_buffer_type_t buft) {
     auto * c = (cl11_device_context *) buft->context;
     return c->name.c_str();
 }
 
-// write the last 16 bytes of a buffer: makes a driver that allocates lazily take the whole memory now. false: the memory is not there
-static bool cl11_probe_buffer(cl11_device_context * c, cl_mem mem, size_t size) {
-    const uint8_t zeros[16] = {};
-    if (size < sizeof(zeros)) {
-        return true;
-    }
-    const cl_int err = clEnqueueWriteBuffer(c->queue, mem, CL_TRUE, size - sizeof(zeros), sizeof(zeros), zeros, 0, nullptr, nullptr);
-    if (err != CL_SUCCESS) {
-        GGML_LOG_DEBUG("%s: the probe of a %zu byte buffer failed: %s\n", __func__, size, cl11_err_str(err));
-    }
-    return err == CL_SUCCESS;
-}
-
 static ggml_backend_buffer_t ggml_backend_cl11_buft_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
     auto * c = (cl11_device_context *) buft->context;
-
-    // keep a few spare bytes: the size is never zero and always a multiple of 16
-    const size_t alloc_size = std::max<size_t>(16, (size + 15) & ~(size_t) 15);
-    if (alloc_size > cl11_max_alloc_size(c)) {
-        GGML_LOG_ERROR("%s: cannot allocate %.2f MiB on %s: the limit of a single allocation is %.2f MiB%s\n", __func__,
-                size / 1024.0 / 1024.0, c->name.c_str(), cl11_max_alloc_size(c) / 1024.0 / 1024.0,
-                cl11_strict_alloc() ? " (GGML_CL11_STRICT_ALLOC)" : "");
-        return nullptr;
-    }
-
     std::lock_guard<std::mutex> lock(c->mutex);
     if (!cl11_ensure_context(c)) {
         return nullptr;
     }
 
-    cl_int err = CL_SUCCESS;
-    cl_mem mem = clCreateBuffer(c->context, CL_MEM_READ_WRITE, alloc_size, nullptr, &err);
-    if (err != CL_SUCCESS || mem == nullptr) {
-        GGML_LOG_ERROR("%s: clCreateBuffer(%.2f MiB) failed on %s: %s\n", __func__,
-                alloc_size / 1024.0 / 1024.0, c->name.c_str(), cl11_err_str(err));
-        return nullptr;
-    }
-
-    if (alloc_size > c->info.max_alloc) {
-        // larger than the nominal CL_DEVICE_MAX_MEM_ALLOC_SIZE: the driver may have accepted the size
-        static std::once_flag warned;
-        std::call_once(warned, [&]() {
-            GGML_LOG_WARN("%s: allocating %.2f MiB on %s, more than CL_DEVICE_MAX_MEM_ALLOC_SIZE (%.2f MiB); "
-                          "set GGML_CL11_STRICT_ALLOC=1 to refuse such allocations\n", "ggml_backend_cl11_buft_alloc_buffer",
-                    alloc_size / 1024.0 / 1024.0, c->name.c_str(), c->info.max_alloc / 1024.0 / 1024.0);
-        });
-    }
-    // clCreateBuffer does not allocate on some drivers (NVIDIA 390: the memory is taken at the first use, and when it is not
-    // there the first kernel or transfer fails with CL_MEM_OBJECT_ALLOCATION_FAILURE, which ggml cannot handle in
-    // buffer->clear() or set_tensor()): touch the end of every buffer now, so that a failure is an allocation failure
-    // (nullptr, which llama.cpp reports as "failed to allocate buffer", and `-fit` / `--n-cpu-moe` can work with)
-    if (!cl11_probe_buffer(c, mem, alloc_size)) {
-        GGML_LOG_ERROR("%s: the %.2f MiB allocation on %s is not usable: out of device memory\n", __func__,
-                alloc_size / 1024.0 / 1024.0, c->name.c_str());
-        clReleaseMemObject(mem);
+    cl_mem mem = nullptr;
+    size_t alloc_size = 0;
+    if (!cl11_alloc_buffer(c->context, c->queue, c->info, c->name.c_str(), __func__, c->strict_alloc_dev, size, mem, alloc_size)) {
         return nullptr;
     }
 
@@ -1334,16 +1248,12 @@ static ggml_backend_buffer_t ggml_backend_cl11_buft_alloc_buffer(ggml_backend_bu
 
 static size_t ggml_backend_cl11_buft_get_alignment(ggml_backend_buffer_type_t buft) {
     auto * c = (cl11_device_context *) buft->context;
-    size_t align = std::max<size_t>(CL11_MIN_ALIGNMENT, c->info.align_bytes);
-    // CL11_BASE is 4096-aligned
-    align = std::min<size_t>(align, 4096);
-    // power of 2
-    return (size_t) cl11_pow2_floor(align);
+    return cl11_buffer_alignment(c->info);
 }
 
 static size_t ggml_backend_cl11_buft_get_max_size(ggml_backend_buffer_type_t buft) {
     auto * c = (cl11_device_context *) buft->context;
-    return cl11_max_buffer_size(c);
+    return cl11_max_buffer_size(c->info);
 }
 
 static bool ggml_backend_cl11_buft_is_host(ggml_backend_buffer_type_t buft) {
@@ -1447,11 +1357,11 @@ static bool cl11_supports_op_impl(const cl11_device_context * c, const ggml_tens
     }
     if (c->strict_alloc_dev) {
         // the driver cannot allocate a tensor larger than CL_DEVICE_MAX_MEM_ALLOC_SIZE
-        if (ggml_nbytes(op) > cl11_max_buffer_size(c)) {
+        if (ggml_nbytes(op) > cl11_max_buffer_size(c->info)) {
             return false;
         }
         for (int i = 0; i < GGML_MAX_SRC; ++i) {
-            if (op->src[i] != nullptr && ggml_nbytes(op->src[i]) > cl11_max_buffer_size(c)) {
+            if (op->src[i] != nullptr && ggml_nbytes(op->src[i]) > cl11_max_buffer_size(c->info)) {
                 return false;
             }
         }
@@ -1598,7 +1508,7 @@ static bool cl11_supports_op_impl(const cl11_device_context * c, const ggml_tens
             }
             // the scratch buffers of the prompt processing path
             const size_t pairs = (size_t) (src2->ne[0] * src2->ne[1]);
-            return pairs * (size_t) std::max(src0->ne[0], src0->ne[1]) * sizeof(float) <= cl11_max_buffer_size(c);
+            return pairs * (size_t) std::max(src0->ne[0], src0->ne[1]) * sizeof(float) <= cl11_max_buffer_size(c->info);
         }
         default:
             return false;
@@ -1947,25 +1857,11 @@ static void cl11_xprep_note_write(cl11_device_context * c, const ggml_tensor * n
     }
 }
 
+// Compatibility shim: ggml keeps the device wrapper; the cache implementation lives in the backend buffer helper.
 // sub-buffer [offset, offset + size) of `parent` for a constant-memory kernel argument (cached), nullptr if it cannot be created
 // (the origin of a sub-buffer must be aligned to CL_DEVICE_MEM_BASE_ADDR_ALIGN)
 static cl_mem cl11_const_sub(cl11_device_context * c, cl_mem parent, size_t offset, size_t size) {
-    if (c->info.align_bytes == 0 || offset % c->info.align_bytes != 0) {
-        return nullptr;
-    }
-    for (const auto & e : c->const_subs) {
-        if (e.parent == parent && e.offset == offset && e.size == size) {
-            return e.sub;
-        }
-    }
-    cl_buffer_region region = { offset, size };
-    cl_int err = CL_SUCCESS;
-    cl_mem sub = clCreateSubBuffer(parent, CL_MEM_READ_ONLY, CL_BUFFER_CREATE_TYPE_REGION, &region, &err);
-    if (err != CL_SUCCESS || sub == nullptr) {
-        return nullptr;
-    }
-    c->const_subs.push_back({ parent, offset, size, sub });
-    return sub;
+    return cl11_const_sub(c->const_subs, c->info, parent, offset, size);
 }
 
 static int cl11_log2_exact(int v) {
@@ -2263,7 +2159,7 @@ static bool cl11_mid_ensure(cl11_device_context * c, cl11_device_context::mid_bu
         b.buf = nullptr;
         return false;
     }
-    if (!cl11_probe_buffer(c, b.buf, std::max<size_t>(bytes, 16))) { // lazy allocation of the driver, see alloc_buffer
+    if (!cl11_probe_buffer(c->queue, b.buf, std::max<size_t>(bytes, 16))) { // lazy allocation of the driver, see alloc_buffer
         GGML_LOG_ERROR("%s: cannot allocate %zu bytes of scratch memory for MUL_MAT_ID: out of device memory\n", __func__, bytes);
         clReleaseMemObject(b.buf);
         b.buf = nullptr;

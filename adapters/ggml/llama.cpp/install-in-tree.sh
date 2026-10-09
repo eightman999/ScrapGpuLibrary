@@ -41,7 +41,7 @@ copy_if_different() { # src dst
 dest="$tree/ggml/src/ggml-cl11"
 copy_if_different "$adapter/CMakeLists.txt" "$dest/CMakeLists.txt"
 copy_if_different "$adapter/ggml-cl11.cpp"  "$dest/ggml-cl11.cpp"
-for f in "$repo"/src/backends/opencl11/*.{h,cpp}; do
+for f in "$repo"/src/backends/opencl11/*.{h,cpp,cmake}; do
     copy_if_different "$f" "$dest/opencl11/$(basename "$f")"
 done
 for f in "$repo"/src/backends/opencl11/kernels/*.cl; do

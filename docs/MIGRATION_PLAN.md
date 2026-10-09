@@ -296,6 +296,8 @@ Step 2 done (2026-10-09): moved OpenCL error strings and lazy `cl_context` / in-
 Step 3 done (2026-10-09): moved the kernel id/class/table helpers and OpenCL program build/source embedding to `src/backends/opencl11/kernels.{h,cpp}`, and moved the `.cl` files unchanged to `src/backends/opencl11/kernels/`. `ggml-cl11.cpp` keeps program orchestration compatibility shims for work-group reduction, split-program selection, K-quant program creation and kernel handle storage until executor/buffer state moves.
 `GGML_CL11_PRINT_BUILD_OPTS=1` prints the exact OpenCL build options string before `clBuildProgram` for byte-for-byte comparison.
 
+Step 4 done (2026-10-09): moved buffer limits/alignment, strict/above-max allocation policy, end-of-buffer allocation probe, constant sub-buffer cache creation and newest-first release helper to `src/backends/opencl11/buffer.{h,cpp}`. `ggml-cl11.cpp` keeps the ggml buffer vtable, dummy base pointer/offset handling, R32 repack transfer and the `cl11_fill` launch shim until the executor moves in Step 5. The kernel file list and generated-header embedding loop now live once in `src/backends/opencl11/opencl11_kernels.cmake`, included by both root and adapter CMake paths.
+
 ## 6. リスクと未決
 
 | 項目 | リスク | 未決 / 提案 |
