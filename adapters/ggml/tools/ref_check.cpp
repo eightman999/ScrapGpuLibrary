@@ -2,7 +2,7 @@
 //
 // Build:
 //   c++ -std=c++17 -O1 -I/Users/eightman/dev/sandbox/llama.cpp-b11384/ggml/include -Iinclude \
-//     adapters/ggml/tools/ref_check.cpp src/core/*.cpp src/core/ref/*.cpp -Isrc/core/ref \
+//     adapters/ggml/tools/ref_check.cpp src/core/*.cpp src/core/ref/*.cpp src/tensor/*.cpp -Isrc -Isrc/core/ref \
 //     -L/Users/eightman/dev/sandbox/llama.cpp-b11384/build-dl/bin -lggml -lggml-base \
 //     -Wl,-rpath,/Users/eightman/dev/sandbox/llama.cpp-b11384/build-dl/bin -o _w/ref_check
 // Run:
