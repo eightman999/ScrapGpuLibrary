@@ -9,6 +9,11 @@ file(GLOB_RECURSE SCRAPGPU_CORE_SOURCES
     "${ROOT_DIR}/src/core/*.hpp"
     "${ROOT_DIR}/src/core/*.c"
     "${ROOT_DIR}/src/core/*.cpp")
+file(GLOB_RECURSE SCRAPGPU_OPENCL11_SOURCES
+    "${ROOT_DIR}/src/backends/opencl11/*.h"
+    "${ROOT_DIR}/src/backends/opencl11/*.hpp"
+    "${ROOT_DIR}/src/backends/opencl11/*.c"
+    "${ROOT_DIR}/src/backends/opencl11/*.cpp")
 
 set(FORBIDDEN_PATTERN "#[ \t]*include[ \t]*[<\"]([^>\"]*(ggml|CL/cl\\.h|OpenCL/opencl\\.h|torch|onnxruntime)[^>\"]*)[>\"]")
 foreach (FILE IN LISTS SCRAPGPU_PUBLIC_HEADERS SCRAPGPU_CORE_SOURCES)
@@ -18,4 +23,12 @@ foreach (FILE IN LISTS SCRAPGPU_PUBLIC_HEADERS SCRAPGPU_CORE_SOURCES)
     endif()
 endforeach()
 
-message(STATUS "ScrapGpu core dependency check passed")
+set(FORBIDDEN_OPENCL11_PATTERN "#[ \t]*include[ \t]*[<\"]([^>\"]*(ggml|torch|onnxruntime)[^>\"]*)[>\"]")
+foreach (FILE IN LISTS SCRAPGPU_OPENCL11_SOURCES)
+    file(READ "${FILE}" CONTENT)
+    if (CONTENT MATCHES "${FORBIDDEN_OPENCL11_PATTERN}")
+        message(FATAL_ERROR "Forbidden adapter dependency include in ${FILE}: ${CMAKE_MATCH_1}")
+    endif()
+endforeach()
+
+message(STATUS "ScrapGpu dependency check passed")

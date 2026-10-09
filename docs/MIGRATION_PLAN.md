@@ -289,6 +289,8 @@
 | 9 | P3 | `src/core/graph/*`, `adapters/ggml/graph.*` | fusion 判定と execution plan。 | 当面 `ggml_backend_cl11_graph_optimize` は shim として残し、plan 生成へ委譲。 | launch count (`GGML_CL11_LAUNCH_LOG=1`) が増えないことを確認。 |
 | 10 | P3 | CMake / docs | `scrapgpu_core`, `scrapgpu_opencl11`, `ggml-cl11` target 分離。 | out-of-tree plugin と in-tree patch の両方で同じ backend objects/static lib を link。 | in-tree build と plugin build の両方。 |
 
+Step 1 done (2026-10-09): moved `cl11_device_info`, device string/scalar helpers, `GGML_CL11_DEVICES` filtering, AMD generation detection, `cl11_tuning_for`, `cl11_config`, `cl11_mmx` parsing/validation and the device probe helper to `src/backends/opencl11/device.{h,cpp}`. `ggml-cl11.cpp` now keeps a registry compatibility shim that materializes the existing ggml `cl11_device_context` objects from backend-probed device info; context/program/buffer/executor state remains in ggml for later steps.
+
 ## 6. リスクと未決
 
 | 項目 | リスク | 未決 / 提案 |

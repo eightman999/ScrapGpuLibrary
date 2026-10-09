@@ -25,6 +25,29 @@ find_package(OpenCL REQUIRED)
 
 set(TARGET_NAME ggml-cl11)
 
+if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../src/backends/opencl11/device.cpp")
+    get_filename_component(CL11_OPENCL11_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../src/backends/opencl11" ABSOLUTE)
+else()
+    set(CL11_OPENCL11_DIR "${CMAKE_CURRENT_SOURCE_DIR}/opencl11")
+endif()
+
+if (NOT TARGET scrapgpu_opencl11)
+    add_library(scrapgpu_opencl11 STATIC
+                "${CL11_OPENCL11_DIR}/device.cpp")
+    get_filename_component(CL11_BACKENDS_DIR "${CL11_OPENCL11_DIR}/.." ABSOLUTE)
+    target_include_directories(scrapgpu_opencl11 PUBLIC "${CL11_BACKENDS_DIR}" "${CL11_OPENCL11_DIR}")
+    target_link_libraries(scrapgpu_opencl11 PUBLIC ${OpenCL_LIBRARIES})
+    target_include_directories(scrapgpu_opencl11 PUBLIC ${OpenCL_INCLUDE_DIRS})
+    target_compile_features(scrapgpu_opencl11 PUBLIC cxx_std_17)
+    target_compile_definitions(scrapgpu_opencl11 PUBLIC
+        CL_TARGET_OPENCL_VERSION=110
+        CL_USE_DEPRECATED_OPENCL_1_1_APIS)
+    set_target_properties(scrapgpu_opencl11 PROPERTIES
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON
+        POSITION_INDEPENDENT_CODE ON)
+endif()
+
 if (CL11_IN_TREE)
     ggml_add_backend_library(${TARGET_NAME}
                              ggml-cl11.cpp
@@ -104,8 +127,9 @@ else()
                 include/ggml-cl11.h)
     # same definitions as ggml_add_backend_library (ggml/src/CMakeLists.txt) with GGML_BACKEND_DL and BUILD_SHARED_LIBS
     target_compile_definitions(${TARGET_NAME} PRIVATE GGML_BACKEND_DL GGML_BACKEND_BUILD GGML_BACKEND_SHARED)
-    target_include_directories(${TARGET_NAME} PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    target_include_directories(${TARGET_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    # llama.cpp's headers as system headers: their static helpers would warn (-Wunused-function) in every user
+    target_include_directories(${TARGET_NAME} SYSTEM PRIVATE
         "${LLAMA_CPP_SOURCE_DIR}/ggml/include"
         "${LLAMA_CPP_SOURCE_DIR}/ggml/src")
     target_link_libraries(${TARGET_NAME} PRIVATE "${GGML_BASE_LIBRARY}")
@@ -116,7 +140,7 @@ else()
     install(TARGETS ${TARGET_NAME} LIBRARY DESTINATION lib)
 endif()
 
-target_link_libraries(${TARGET_NAME} PRIVATE ${OpenCL_LIBRARIES})
+target_link_libraries(${TARGET_NAME} PRIVATE scrapgpu_opencl11 ${OpenCL_LIBRARIES})
 target_include_directories(${TARGET_NAME} PRIVATE ${OpenCL_INCLUDE_DIRS})
 
 # the host code only uses the OpenCL 1.1 API (Khronos headers: hide everything newer)

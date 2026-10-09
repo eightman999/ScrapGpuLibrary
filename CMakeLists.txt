@@ -6,10 +6,6 @@ option(SCRAPGPU_BUILD_OPENCL11 "Build the OpenCL 1.1 backend (Phase 2)" OFF)
 option(SCRAPGPU_BUILD_GGML_ADAPTER "Build the existing ggml CL11 adapter" OFF)
 option(SCRAPGPU_BUILD_TESTS "Build ScrapGpu contract tests" ON)
 
-if (SCRAPGPU_BUILD_OPENCL11)
-    message(FATAL_ERROR "SCRAPGPU_BUILD_OPENCL11 is reserved for Phase 2 and is not implemented in Phase 1")
-endif()
-
 if (SCRAPGPU_BUILD_CORE)
     add_library(scrapgpu_core
         src/core/op.cpp
@@ -21,6 +17,25 @@ if (SCRAPGPU_BUILD_CORE)
     set_target_properties(scrapgpu_core PROPERTIES
         CXX_VISIBILITY_PRESET hidden
         VISIBILITY_INLINES_HIDDEN ON)
+endif()
+
+if (SCRAPGPU_BUILD_OPENCL11)
+    find_package(OpenCL REQUIRED)
+    add_library(scrapgpu_opencl11 STATIC
+        src/backends/opencl11/device.cpp)
+    target_include_directories(scrapgpu_opencl11 PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/backends"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/backends/opencl11"
+        ${OpenCL_INCLUDE_DIRS})
+    target_link_libraries(scrapgpu_opencl11 PUBLIC ${OpenCL_LIBRARIES})
+    target_compile_features(scrapgpu_opencl11 PUBLIC cxx_std_17)
+    target_compile_definitions(scrapgpu_opencl11 PUBLIC
+        CL_TARGET_OPENCL_VERSION=110
+        CL_USE_DEPRECATED_OPENCL_1_1_APIS)
+    set_target_properties(scrapgpu_opencl11 PROPERTIES
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON
+        POSITION_INDEPENDENT_CODE ON)
 endif()
 
 if (SCRAPGPU_BUILD_GGML_ADAPTER)

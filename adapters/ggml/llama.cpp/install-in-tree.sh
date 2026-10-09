@@ -3,7 +3,7 @@
 #
 #   adapters/ggml/llama.cpp/install-in-tree.sh <llama.cpp dir>
 #
-# - copies CMakeLists.txt, ggml-cl11.cpp and kernels/ to <llama.cpp>/ggml/src/ggml-cl11/
+# - copies CMakeLists.txt, ggml-cl11.cpp, OpenCL11 backend sources and kernels/ to <llama.cpp>/ggml/src/ggml-cl11/
 #   and include/ggml-cl11.h to <llama.cpp>/ggml/include/
 # - applies in-tree-registration.patch (CMake option GGML_CL11 + backend registry)
 # Idempotent: files are only copied when they differ, an already applied patch is skipped.
@@ -11,6 +11,7 @@ set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 adapter="$(cd "$here/.." && pwd)"
+repo="$(cd "$adapter/../.." && pwd)"
 patch_file="$here/in-tree-registration.patch"
 expected_commit="0faee50"   # llama.cpp b11384
 
@@ -40,6 +41,9 @@ copy_if_different() { # src dst
 dest="$tree/ggml/src/ggml-cl11"
 copy_if_different "$adapter/CMakeLists.txt" "$dest/CMakeLists.txt"
 copy_if_different "$adapter/ggml-cl11.cpp"  "$dest/ggml-cl11.cpp"
+for f in "$repo"/src/backends/opencl11/*.{h,cpp}; do
+    copy_if_different "$f" "$dest/opencl11/$(basename "$f")"
+done
 for f in "$adapter"/kernels/*.cl; do
     copy_if_different "$f" "$dest/kernels/$(basename "$f")"
 done
