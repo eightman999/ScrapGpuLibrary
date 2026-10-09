@@ -1,5 +1,48 @@
-# Thin wrapper so that `cmake -S . -B build -DLLAMA_CPP_SOURCE_DIR=... -DLLAMA_CPP_BUILD_DIR=...` builds
-# the CL11 ggml plugin (adapters/ggml). See adapters/ggml/llama.cpp/README.md.
 cmake_minimum_required(VERSION 3.14)
 project(ScrapGpuLibrary C CXX)
-add_subdirectory(adapters/ggml)
+
+option(SCRAPGPU_BUILD_CORE "Build the ScrapGpu core library without ggml or OpenCL" ON)
+option(SCRAPGPU_BUILD_OPENCL11 "Build the OpenCL 1.1 backend (Phase 2)" OFF)
+option(SCRAPGPU_BUILD_GGML_ADAPTER "Build the existing ggml CL11 adapter" OFF)
+option(SCRAPGPU_BUILD_TESTS "Build ScrapGpu contract tests" ON)
+
+if (SCRAPGPU_BUILD_OPENCL11)
+    message(FATAL_ERROR "SCRAPGPU_BUILD_OPENCL11 is reserved for Phase 2 and is not implemented in Phase 1")
+endif()
+
+if (SCRAPGPU_BUILD_CORE)
+    add_library(scrapgpu_core
+        src/core/op.cpp
+        src/core/registry.cpp
+        src/core/status.cpp
+        src/core/tensor.cpp)
+    target_include_directories(scrapgpu_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    target_compile_features(scrapgpu_core PUBLIC cxx_std_17)
+    set_target_properties(scrapgpu_core PROPERTIES
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON)
+endif()
+
+if (SCRAPGPU_BUILD_GGML_ADAPTER)
+    add_subdirectory(adapters/ggml)
+endif()
+
+if (SCRAPGPU_BUILD_TESTS AND SCRAPGPU_BUILD_CORE)
+    enable_testing()
+
+    add_executable(scrapgpu_core_contract_tests tests/core/core_contract_tests.cpp)
+    target_link_libraries(scrapgpu_core_contract_tests PRIVATE scrapgpu_core)
+    add_test(NAME scrapgpu_core_contract_tests COMMAND scrapgpu_core_contract_tests)
+
+    add_executable(scrapgpu_public_headers_c tests/core/public_headers_c.c)
+    target_link_libraries(scrapgpu_public_headers_c PRIVATE scrapgpu_core)
+    set_target_properties(scrapgpu_public_headers_c PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED ON)
+    add_test(NAME scrapgpu_public_headers_c COMMAND scrapgpu_public_headers_c)
+
+    add_executable(scrapgpu_public_headers_cpp tests/core/public_headers_cpp.cpp)
+    target_link_libraries(scrapgpu_public_headers_cpp PRIVATE scrapgpu_core)
+    add_test(NAME scrapgpu_public_headers_cpp COMMAND scrapgpu_public_headers_cpp)
+
+    add_test(NAME scrapgpu_dependency_check
+        COMMAND "${CMAKE_COMMAND}" -DROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_core_dependencies.cmake")
+endif()
