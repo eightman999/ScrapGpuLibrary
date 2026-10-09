@@ -13,8 +13,9 @@
 | ライセンス | 扱い |
 | --- | --- |
 | MIT / BSD-3 / BSL-1.0 / CC0 | 著作権表示を残せば、取り込み・移植とも可。 |
-| Apache-2.0（CLBlast、MNN、OpenCL-CLHPP など） | MIT と両立する。同梱・移植するときは Apache-2.0 の全文を添え、改変したファイルには変更を明記する（§4）。NOTICE があれば引き継ぐ。`THIRD_PARTY` に併記する。 |
-| GPL（clpeak: GPL-3.0、mixbench: GPL-2.0、Tasmota、PowerJoular、likwid） | ソースを取り込まない。外部プロセスとして実行し、出力（JSON / CSV）だけを使う。 |
+| Apache-2.0（CLBlast、MNN、OpenCL-CLHPP など） | 本ライブラリの GPL-3.0-or-later と両立する（GPLv2 とは両立しない）。同梱・移植するときは Apache-2.0 の全文を添え、改変したファイルには変更を明記する（§4）。NOTICE があれば引き継ぐ。`THIRD_PARTY_NOTICES.md` に併記する。 |
+| GPL-3.0 / GPL-2.0-or-later（clpeak: GPL-3.0 など） | 本ライブラリも GPL-3.0-or-later なので、表示を残せば移植できる。ただし当面は、計測ツールは外部プロセスとして実行し、出力（JSON / CSV）だけを使う。 |
+| GPL-2.0 のみ（"or later" のないもの） | GPL-3.0 と両立しないので取り込まない。外部プロセスとしてだけ使う（mixbench は GPL-2.0。"or later" の有無を取り込む前に確かめる）。 |
 | BabelStream の独自ライセンス | 改変物の結果を公表するときは「改変物」と明記する条件がある。外部ツールとしてのみ使う。 |
 | LICENSE ファイルがない（**Relic**） | README に「MIT」とあるだけで、GitHub のライセンス判定も null。法的な根拠が弱いので、取り込まない（後述）。 |
 
@@ -181,9 +182,9 @@ https://github.com/anamnesic/relic。調べた版は 2026-10-06 の commit `a675
 
 ## 取り込むときの手順
 
-1. 取り込んだ・移植したファイルは `third_party/` またはファイル冒頭の表記で出典・コミット・ライセンスを残し、リポジトリ直下の `THIRD_PARTY`（新規）に一覧する。
+1. 取り込んだ・移植したファイルは `third_party/` またはファイル冒頭の表記で出典・コミット・ライセンスを残し、リポジトリ直下の `THIRD_PARTY_NOTICES.md` に一覧する。
 2. Apache-2.0 のコードを同梱する場合は、ライセンス全文を添付し、改変したファイルに変更の旨を書く。
-3. GPL のツール（clpeak、mixbench）はリポジトリに入れず、実行手順と出力の取り込み方だけ文書にする。
+3. 計測用の GPL ツール（clpeak、mixbench）は当面リポジトリに入れず、実行手順と出力の取り込み方だけ文書にする。
 4. 移植したカーネルは、必ず CPU 参照との NMSE（ARCHITECTURE.md の「正しさの基準」）と、CL11 のカーネルとの性能比較を取ってから採用する。
 
 ## 未検証（実機または追加調査が必要）

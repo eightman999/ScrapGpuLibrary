@@ -37,7 +37,7 @@ export GGML_BACKEND_PATH=$PWD/build-cl11/libggml-cl11.so
 <llama.cpp>/build-dl/bin/llama-bench -m model.gguf -dev CL11_0 -ngl 99
 ```
 
-- ルートの `CMakeLists.txt` は `adapters/ggml` を読み込むだけの薄いラッパーなので、`cmake -S . -B build-cl11 -DLLAMA_CPP_SOURCE_DIR=... -DLLAMA_CPP_BUILD_DIR=...` でも同じものができます。
+- ルートの `CMakeLists.txt` からも作れます：`cmake -S . -B build-cl11 -DSCRAPGPU_BUILD_GGML_ADAPTER=ON -DLLAMA_CPP_SOURCE_DIR=... -DLLAMA_CPP_BUILD_DIR=...`。
 - `LLAMA_CPP_SOURCE_DIR` からは `ggml/include` と `ggml/src`（内部ヘッダ）を、`LLAMA_CPP_BUILD_DIR` からは `libggml-base` を使います。`libggml-base` が別の場所にあるときは `-DGGML_BASE_LIBRARY=<path>` を渡します。
 - プラグインは `libggml-base` の場所を RPATH に埋め込むので、llama.cpp のビルドを動かすと動かなくなります。移したときは作り直してください。
 - `GGML_BACKEND_PATH` は 1 つのパスです。他のプラグインと併用するときは、`ggml_backend_load_all_from_path` の検索対象（実行ファイルと同じディレクトリ）に `libggml-cl11.so` を置く方法もあります。
