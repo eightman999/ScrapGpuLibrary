@@ -1077,18 +1077,29 @@ static bool cl11_dn_probe(cl11_device_context * c) {
 
 // mode 0: all the kernels in one program, 1: everything but the Q4_K / Q6_K mat-vec kernels, 2: only these (on NVIDIA they are built with
 // `-cl-nv-maxrregcount`, see cl11_ensure_kprogram), 3: neither the K-quant nor the mat-mat kernels, 4: only the mat-mat kernels
+// ARGSORT / TOP_K: the largest padded row (a power of 2) whose keys and indices (2 x 4 bytes per element) fit the local memory with 512
+// bytes to spare; the kernel declares static local arrays of this size (SORT_NMAX)
+static int64_t cl11_sort_nmax(size_t local_mem) {
+    int64_t n = 1;
+    while (n < (1 << 20) && (size_t) (n * 2) * 8 + 512 <= local_mem) {
+        n <<= 1;
+    }
+    return n;
+}
+
 // (3 and 4: cfg.split_programs, see cl11_ensure_program)
 static bool cl11_build_program(cl11_device_context * c, const cl11_config & cfg, std::string & log, int mode, cl_program & prog) {
     char opts[2048];
     snprintf(opts, sizeof(opts), "-cl-std=CL1.1 -DWG_EW=%d -DWG_ROW=%d -DWG_MV=%d -DGT=%d -DNRW=%d -DMMBN=%d"
             " -DWG_MVR_Q4_0=%d -DNRR_Q4_0=%d -DWG_MVR_Q8_0=%d -DNRR_Q8_0=%d -DWG_MVR_Q4_K=%d -DNRR_Q4_K=%d -DWG_MVR_Q6_K=%d -DNRR_Q6_K=%d"
-            " -DLDG_Q4_0=%d -DLDG_Q8_0=%d -DLDG_Q4_K=%d -DLDG_Q6_K=%d -DDN_Q4_0=%d -DDN_Q8_0=%d -DDN_Q4_K=%d -DDN_Q6_K=%d -DATT_PL=%d -DWG_ATT=%d%s%s %s",
+            " -DLDG_Q4_0=%d -DLDG_Q8_0=%d -DLDG_Q4_K=%d -DLDG_Q6_K=%d -DDN_Q4_0=%d -DDN_Q8_0=%d -DDN_Q4_K=%d -DDN_Q6_K=%d -DATT_PL=%d -DWG_ATT=%d -DSORT_NMAX=%d%s%s %s",
             cfg.wg_ew, cfg.wg_row, cfg.wg_mv, cfg.gt, cfg.mvs_nrw, cfg.mm_bn,
             cfg.wg_mvr[CL11_RK_Q4_0], cfg.mvr_nrr[CL11_RK_Q4_0], cfg.wg_mvr[CL11_RK_Q8_0], cfg.mvr_nrr[CL11_RK_Q8_0],
             cfg.wg_mvr[CL11_RK_Q4_K], cfg.mvr_nrr[CL11_RK_Q4_K], cfg.wg_mvr[CL11_RK_Q6_K], cfg.mvr_nrr[CL11_RK_Q6_K],
             c->use_nv_ldg && cfg.mvr_ldg[CL11_RK_Q4_0], c->use_nv_ldg && cfg.mvr_ldg[CL11_RK_Q8_0],
             c->use_nv_ldg && cfg.mvr_ldg[CL11_RK_Q4_K], c->use_nv_ldg && cfg.mvr_ldg[CL11_RK_Q6_K],
             cfg.mvr_dn[CL11_RK_Q4_0], cfg.mvr_dn[CL11_RK_Q8_0], cfg.mvr_dn[CL11_RK_Q4_K], cfg.mvr_dn[CL11_RK_Q6_K], cfg.att_p, cfg.wg_att,
+            (int) cl11_sort_nmax(c->info.local_mem),
             c->use_nv_asm ? " -DCL11_NV_ASM" : "", cfg.use_mad ? " -DCL11_MAD" : "", getenv("GGML_CL11_BUILD_OPTS") ? getenv("GGML_CL11_BUILD_OPTS") : "");
     if (c->use_nv_ldg) {
         strncat(opts, " -DCL11_NV_LDG", sizeof(opts) - strlen(opts) - 1);
@@ -2309,7 +2320,7 @@ static int64_t cl11_sort_npad(int64_t ncols) {
 }
 
 static bool cl11_sort_fits(const cl11_device_context * c, int64_t ncols) {
-    return ncols >= 1 && ncols <= (1 << 20) && (size_t) cl11_sort_npad(ncols) * 8 + 512 <= c->info.local_mem;
+    return ncols >= 1 && cl11_sort_npad(ncols) <= cl11_sort_nmax(c->info.local_mem);
 }
 
 // GGML_CL11_NO_OPS=NAME,NAME,...: supports_op is false for these operations (ggml_op_desc names, e.g. MUL_MAT_ID,ARGSORT); debugging of mixed CPU / GPU graphs
@@ -3126,7 +3137,7 @@ static bool cl11_op_argsort(cl11_device_context * c, const ggml_tensor * dst) {
     const int32_t npad = (int32_t) cl11_sort_npad(src0->ne[0]);
     const size_t  lsz  = (size_t) std::min<int64_t>(c->cfg.wg_row, std::max<int64_t>(32, npad / 2));
     cl11_args a(c->kernels[K_ARGSORT]);
-    a.set(s0.mem).set(s0.td).set(d.mem).set(d.td).set_local((size_t) npad * sizeof(float)).set_local((size_t) npad * sizeof(int32_t)).set(npad).set(desc);
+    a.set(s0.mem).set(s0.td).set(d.mem).set(d.td).set(npad).set(desc);   // no local-memory argument: see k_argsort (Mesa Clover)
     return cl11_launch(c, a, lsz, (size_t) (src0->ne[1] * src0->ne[2] * src0->ne[3]));
 }
 
