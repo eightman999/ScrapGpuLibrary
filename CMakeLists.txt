@@ -44,7 +44,8 @@ if (SCRAPGPU_BUILD_OPENCL11)
         src/backends/opencl11/context.cpp
         src/backends/opencl11/device.cpp
         src/backends/opencl11/device_state.cpp
-        src/backends/opencl11/kernels.cpp)
+        src/backends/opencl11/kernels.cpp
+        src/backends/opencl11/r32.cpp)
     target_include_directories(scrapgpu_opencl11 PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/src/backends"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/backends/opencl11"
@@ -87,6 +88,11 @@ if (SCRAPGPU_BUILD_TESTS AND SCRAPGPU_BUILD_CORE)
     target_link_libraries(scrapgpu_tensor_tests PRIVATE scrapgpu_tensor)
     target_include_directories(scrapgpu_tensor_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/backends")
     add_test(NAME scrapgpu_tensor_tests COMMAND scrapgpu_tensor_tests)
+
+    add_executable(scrapgpu_r32_tests tests/r32/r32_tests.cpp)
+    target_link_libraries(scrapgpu_r32_tests PRIVATE scrapgpu_tensor)
+    target_include_directories(scrapgpu_r32_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/backends")
+    add_test(NAME scrapgpu_r32_tests COMMAND scrapgpu_r32_tests)
 
     add_executable(scrapgpu_ref_ops_tests tests/ref/ref_ops_tests.cpp)
     target_link_libraries(scrapgpu_ref_ops_tests PRIVATE scrapgpu_core)

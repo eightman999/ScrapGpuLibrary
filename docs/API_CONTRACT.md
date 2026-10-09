@@ -45,7 +45,8 @@
 - `scrapgpu_tensor_desc`：`dtype`、`ne[4]`（0 番目が最も内側）、`nb[4]`（バイト単位のストライド）、`buffer`、`offset`、`layout`。ggml と同じ並びにして、adapter の変換を単純にする。
 - `dtype`：`F32`、`F16`、`I32`、`I64`、`Q4_0`、`Q8_0`、`Q4_K`、`Q6_K`（ほかの ggml の型は値だけ予約し、未対応として扱う）。
 - `layout`（物理配置）：`NATURAL`（論理と同じ並び。ストライドで連続か非連続かが分かる）、`R32`（Q4_0 / Q8_0 / Q4_K / Q6_K を 32 行ずつ再配置したもの。スライス `ne2*ne3` ごと）。
-- **R32 はテンソル全体に付く属性**。R32 のテンソルのビューは作れない（`UNSUPPORTED`）。R32 が使えるのは、連続で `nb2 % 16 == 0` のときだけ。
+- **R32 はテンソル全体に付く属性**。R32 のテンソルのビューは作れない（`UNSUPPORTED`）。R32 が使えるのは、repack 可能な dtype で、ggml 流の意味で連続（大きさ 1 の次元のストライドは問わない）で、`ne2 * ne3 == 1` または `nb2 % 16 == 0 && nb3 % 16 == 0` のときだけ。
+- `scrapgpu_tensor_r32_eligible` はバックエンドの規則（`sgt::r32_eligible`、上の条件）と同じ答えを返す（Phase 3 S3 で決定）。1 スライスだけのテンソルはスライスのストライドを読まないので `nb2` の制約は課さない。Phase 1 の「厳密な contiguous かつ `nb2 % 16 == 0`」は、バックエンドが R32 で読めないテンソルを不適格と誤判定するため置き換えた。
 - 論理と物理の変換（Pack / Unpack）は、ホストとの転送のときに Core が行う。部分的な読み書きも、量子化ブロックの境界で受け付ける。全量を逆量子化することはしない。
 
 ## 6. Stream と同期
@@ -107,7 +108,7 @@ ROPE と SOFT_MAX の任意入力は、`desc->inputs[]` の固定順で渡す。
 | Backend registry | Phase 1 では登録済みbackendは0個でよい。`scrapgpu_op_supported(NULL, ...)` はop descを検証した後、理由付き `UNSUPPORTED` を返す。 |
 | Backend interface | `include/scrapgpu/backend.h` は内部向けC ABIとして公開ヘッダと同じ依存禁止を受ける。backend vtable は device/buffer/stream/op query/plan build/execute/free を持つ。 |
 | Plan | 最小planは `scrapgpu_plan_desc` のnode列と、各node出力のuse countだけを持つ。融合判定に必要な隣接関係と「中間出力が他で使われていない」条件を表せる最小形に留める。 |
-| Tensor layout | R32 は `scrapgpu_layout` の値で表し、R32 eligibility helper は「contiguous かつ `nb[2] % 16 == 0`」だけを見る。R32 view禁止や量子化block境界の部分転送は Phase 3 のPack/Unpack契約で実装する。 |
+| Tensor layout | R32 は `scrapgpu_layout` の値で表す。R32 eligibility helper は Phase 1 では「厳密な contiguous かつ `nb[2] % 16 == 0`」だったが、Phase 3 S3 でバックエンドの規則（`sgt::r32_eligible`：repack 可能な dtype、ggml 流の contiguous、`ne2 * ne3 == 1 || (nb[2] % 16 == 0 && nb[3] % 16 == 0)`）に揃えた。R32 view禁止や量子化block境界の部分転送は Phase 3 のPack/Unpack契約で実装する。 |
 | dtype reserved values | 基本dtypeは `F32/F16/I32/I64/Q4_0/Q8_0/Q4_K/Q6_K`。Gate 1 の `CONCAT` 表現のため、`I16` と `BF16` は予約済み2-byte dtypeとして名前だけ固定した。計算opの対応を意味しない。 |
 | Op validation | Phase 1 の `scrapgpu_op_desc_validate()` はshape/type/parameter presenceの契約チェックだけを行う。GPU local memory limit、scratch容量、世代別kernel選択はbackendの `op_supported` が Phase 2 以降に判断する。 |
 | CMake layout | `SCRAPGPU_BUILD_CORE=ON`、`SCRAPGPU_BUILD_OPENCL11=OFF`、`SCRAPGPU_BUILD_GGML_ADAPTER=OFF` を既定にした。root buildで `SCRAPGPU_BUILD_GGML_ADAPTER=ON` を渡すと従来どおり `adapters/ggml` を追加する。`cmake -S adapters/ggml ...` は独立したまま。 |

@@ -32,6 +32,7 @@
 #include "opencl11/device_state.h"
 #include "opencl11/executor.h"
 #include "opencl11/kernels.h"
+#include "opencl11/r32.h"
 #include "opencl11/tensor.h"
 #include "tensor/tensor.h"
 
@@ -161,20 +162,10 @@ static cl11_tref cl11_ref(const ggml_tensor * t) {
 //
 // Repacked layout "R32" of the Q4_0 / Q8_0 / Q4_K / Q6_K tensors
 //
-// The blocks of Q8_0 (34 bytes), Q4_0 (18 bytes) and Q6_K (210 bytes) are only 2-byte aligned, and the blocks of all of them have
-// a lot of fields: the natural layout needs 16-bit loads and a lot of address arithmetic on an old GPU. set_tensor therefore
-// stores these tensors (when cl11_repacked() is true, that is a property of the tensor alone, so supports_op / the kernels /
-// get_tensor agree) in a layout made for coalesced 128-bit loads, get_tensor converts back. The size is the same as
-// ggml_nbytes(). For every slice of the tensor (ne2 * ne3 slices of M = ne1 rows, nb = ne0 / block size blocks per row), the rows
-// are grouped by 32 (rs = number of rows of the group, 32 except for the last group). The bytes of a block are split into up to
-// 3 areas, one after the other in the slice (area k starts at M * nb * (bytes of the areas before it per block)), see
-// `cl11_rp_areas`. Inside of an area of 16 * U bytes per block the group g starts at g * 32 * nb * 16 * U and the 16-byte unit j
-// (0 <= j < U) of the block b of the row `lane` of the group is the unit (b * U + j) * rs + lane. An area of 2 bytes (the half
-// scale) is an array of halves at b * rs + lane:
-//   Q8_0: quants (32 bytes = 2 units, xor 0x80), d              Q4_0: nibbles (16 bytes = 1 unit), d
-//   Q4_K: quants (the 128 bytes of nibbles, 8 units), header (d, dmin, 12 bytes of scales: 1 unit)
-//   Q6_K: ql + qh (192 bytes, 12 units), scales (16 bytes, xor 0x80, 1 unit), d
-// (see src/backends/opencl11/kernels/mul_mv_r.cl, src/backends/opencl11/kernels/mul_mv_k.cl, dqr_* in common.cl)
+// set_tensor stores the repackable tensors (when cl11_repacked() is true, that is a property of the tensor alone, so
+// supports_op / the kernels / get_tensor agree) in a layout made for coalesced 128-bit loads, get_tensor converts back.
+// The layout itself and the host-side pack / unpack / partial transfer are in src/backends/opencl11/r32.{h,cpp}
+// (cl11_rp_pack, cl11_rp_unpack, cl11_rp_transfer).
 //
 
 static bool cl11_rp_type(ggml_type type) {
@@ -199,137 +190,6 @@ static void cl11_rp_check_view(const ggml_tensor * t) {
     if (t->view_src != nullptr && cl11_repacked(t->view_src)) {
         GGML_ABORT("CL11: the tensor %s is a view of a repacked quantized tensor (%s), which is not supported\n", t->name, t->view_src->name);
     }
-}
-
-// the R32 geometry of the tensor (sgt::r32_geom: blocks per row, block bytes, the areas, M, rowb)
-static sgt::r32_geom cl11_rp_geometry(const ggml_tensor * t) {
-    return sgt::r32_geometry(cl11_desc(t));
-}
-
-// natural -> repacked: `nrows` consecutive rows (a multiple of 32, except at the end of a slice) -> the buffers of the areas
-static void cl11_rp_pack(const sgt::r32_geom & G, const uint8_t * nat, int64_t nrows, uint8_t * const * out) {
-    for (int64_t g0 = 0; g0 < nrows; g0 += 32) {
-        const int rs = (int) std::min<int64_t>(32, nrows - g0);
-        for (int lane = 0; lane < rs; ++lane) {
-            const uint8_t * row = nat + (size_t) (g0 + lane) * G.rowb;
-            for (int b = 0; b < G.nb; ++b) {
-                const uint8_t * p = row + (size_t) b * G.bs;
-                for (int k = 0; k < G.na; ++k) {
-                    const sgt::r32_area & A = G.area[k];
-                    uint8_t * og = out[k] + (size_t) (g0 / 32) * 32 * G.nb * A.len;
-                    if (A.len == 2) {
-                        memcpy(og + ((size_t) b * rs + lane) * 2, p + A.src, 2);
-                    } else {
-                        const int U = A.len / 16;
-                        for (int j = 0; j < U; ++j) {
-                            uint8_t * o = og + (((size_t) b * U + j) * rs + lane) * 16;
-                            const uint8_t * s = p + A.src + 16 * j;
-                            for (int i = 0; i < 16; ++i) {
-                                o[i] = s[i] ^ A.xr;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-// repacked -> natural
-static void cl11_rp_unpack(const sgt::r32_geom & G, const uint8_t * const * in, int64_t nrows, uint8_t * nat) {
-    for (int64_t g0 = 0; g0 < nrows; g0 += 32) {
-        const int rs = (int) std::min<int64_t>(32, nrows - g0);
-        for (int lane = 0; lane < rs; ++lane) {
-            uint8_t * row = nat + (size_t) (g0 + lane) * G.rowb;
-            for (int b = 0; b < G.nb; ++b) {
-                uint8_t * p = row + (size_t) b * G.bs;
-                for (int k = 0; k < G.na; ++k) {
-                    const sgt::r32_area & A = G.area[k];
-                    const uint8_t * ig = in[k] + (size_t) (g0 / 32) * 32 * G.nb * A.len;
-                    if (A.len == 2) {
-                        memcpy(p + A.src, ig + ((size_t) b * rs + lane) * 2, 2);
-                    } else {
-                        const int U = A.len / 16;
-                        for (int j = 0; j < U; ++j) {
-                            const uint8_t * s = ig + (((size_t) b * U + j) * rs + lane) * 16;
-                            uint8_t * o = p + A.src + 16 * j;
-                            for (int i = 0; i < 16; ++i) {
-                                o[i] = s[i] ^ A.xr;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-// copy `size` bytes at byte `offset` of the (natural layout of the) tensor from / to the device. The conversion is done
-// per chunk of whole groups of rows of a slice; a chunk that is only partly written is read, patched and written back.
-static bool cl11_rp_transfer(cl11_device * c, cl_mem mem, const ggml_tensor * t, uint8_t * host, size_t offset, size_t size, bool to_dev) {
-    const sgt::r32_geom G = cl11_rp_geometry(t);
-    const size_t slice_nat = (size_t) G.M * G.rowb;
-    const size_t end = offset + size;
-    const size_t base = cl11_tensor_offset(t);
-    const int64_t chunk_groups = std::max<int64_t>(1, (int64_t) ((size_t) 24 * 1024 * 1024 / (32 * G.rowb)));
-
-    std::vector<uint8_t> abuf[3], nbuf;
-    for (size_t s = offset / slice_nat; s <= (end - 1) / slice_nat; ++s) {
-        const size_t slice_lo = s * slice_nat;
-        const size_t lo = std::max(offset, slice_lo) - slice_lo;
-        const size_t hi = std::min(end, slice_lo + slice_nat) - slice_lo;
-        const int64_t g_first = (int64_t) (lo / G.rowb) / 32;
-        const int64_t g_last  = (int64_t) ((hi - 1) / G.rowb) / 32;
-        const size_t q_slice = base + slice_lo;
-
-        for (int64_t gc = g_first; gc <= g_last; gc += chunk_groups) {
-            const int64_t rA = gc * 32;
-            const int64_t rB = std::min<int64_t>(G.M, std::min(g_last + 1, gc + chunk_groups) * 32);
-            const int64_t nrows = rB - rA;
-            const size_t nat_lo = (size_t) rA * G.rowb, nat_hi = (size_t) rB * G.rowb;
-            const size_t ov_lo = std::max(lo, nat_lo), ov_hi = std::min(hi, nat_hi);
-            const bool full = ov_lo == nat_lo && ov_hi == nat_hi;
-            uint8_t * hp = full ? host + (slice_lo + nat_lo - offset) : nullptr; // the chunk lies inside of the host range
-
-            uint8_t * ap[3] = { nullptr, nullptr, nullptr };
-            size_t   an[3] = { 0, 0, 0 }, ao[3] = { 0, 0, 0 };
-            for (int k = 0; k < G.na; ++k) {
-                an[k] = (size_t) nrows * G.nb * G.area[k].len;
-                ao[k] = q_slice + (size_t) G.M * G.nb * sgt::r32_area_before(G, k) + (size_t) rA * G.nb * G.area[k].len;
-                abuf[k].resize(an[k]);
-                ap[k] = abuf[k].data();
-            }
-            const uint8_t * const * cap = (const uint8_t * const *) ap;
-            if (to_dev) {
-                if (full) {
-                    cl11_rp_pack(G, hp, nrows, ap);
-                } else {
-                    nbuf.resize((size_t) nrows * G.rowb);
-                    for (int k = 0; k < G.na; ++k) {
-                        CL11_CHECK(clEnqueueReadBuffer(c->queue, mem, CL_TRUE, ao[k], an[k], ap[k], 0, nullptr, nullptr));
-                    }
-                    cl11_rp_unpack(G, cap, nrows, nbuf.data());
-                    memcpy(nbuf.data() + (ov_lo - nat_lo), host + (slice_lo + ov_lo - offset), ov_hi - ov_lo);
-                    cl11_rp_pack(G, nbuf.data(), nrows, ap);
-                }
-                for (int k = 0; k < G.na; ++k) {
-                    CL11_CHECK(clEnqueueWriteBuffer(c->queue, mem, CL_TRUE, ao[k], an[k], ap[k], 0, nullptr, nullptr));
-                }
-            } else {
-                for (int k = 0; k < G.na; ++k) {
-                    CL11_CHECK(clEnqueueReadBuffer(c->queue, mem, CL_TRUE, ao[k], an[k], ap[k], 0, nullptr, nullptr));
-                }
-                if (full) {
-                    cl11_rp_unpack(G, cap, nrows, hp);
-                } else {
-                    nbuf.resize((size_t) nrows * G.rowb);
-                    cl11_rp_unpack(G, cap, nrows, nbuf.data());
-                    memcpy(host + (slice_lo + ov_lo - offset), nbuf.data() + (ov_lo - nat_lo), ov_hi - ov_lo);
-                }
-            }
-        }
-    }
-    return true;
 }
 
 static void ggml_backend_cl11_buffer_free_buffer(ggml_backend_buffer_t buffer) {
@@ -370,7 +230,7 @@ static void ggml_backend_cl11_buffer_set_tensor(ggml_backend_buffer_t buffer, gg
     std::lock_guard<std::mutex> lock(bctx->dev->mutex);
     cl11_rp_check_view(tensor);
     if (cl11_repacked(tensor)) {
-        if (!cl11_rp_transfer(bctx->dev, bctx->mem, tensor, (uint8_t *) const_cast<void *>(data), offset, size, true)) {
+        if (!cl11_rp_transfer(bctx->dev, bctx->mem, cl11_desc(tensor), (uint8_t *) const_cast<void *>(data), offset, size, true)) {
             GGML_ABORT("%s: transfer of the repacked tensor %s failed\n", __func__, tensor->name);
         }
         return;
@@ -390,7 +250,7 @@ static void ggml_backend_cl11_buffer_get_tensor(ggml_backend_buffer_t buffer, co
     std::lock_guard<std::mutex> lock(bctx->dev->mutex);
     cl11_rp_check_view(tensor);
     if (cl11_repacked(tensor)) {
-        if (!cl11_rp_transfer(bctx->dev, bctx->mem, tensor, (uint8_t *) data, offset, size, false)) {
+        if (!cl11_rp_transfer(bctx->dev, bctx->mem, cl11_desc(tensor), (uint8_t *) data, offset, size, false)) {
             GGML_ABORT("%s: transfer of the repacked tensor %s failed\n", __func__, tensor->name);
         }
         return;
@@ -418,7 +278,7 @@ static bool ggml_backend_cl11_buffer_cpy_tensor(ggml_backend_buffer_t buffer, co
         // host -> device
         std::lock_guard<std::mutex> lock(c->mutex);
         if (cl11_repacked(dst)) {
-            return cl11_rp_transfer(c, dctx_buf->mem, dst, (uint8_t *) src->data, 0, size, true);
+            return cl11_rp_transfer(c, dctx_buf->mem, cl11_desc(dst), (uint8_t *) src->data, 0, size, true);
         }
         return clEnqueueWriteBuffer(c->queue, dctx_buf->mem, CL_TRUE, cl11_tensor_offset(dst), size, src->data, 0, nullptr, nullptr) == CL_SUCCESS;
     }
