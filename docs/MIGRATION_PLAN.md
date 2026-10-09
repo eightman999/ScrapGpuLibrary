@@ -291,6 +291,8 @@
 
 Step 1 done (2026-10-09): moved `cl11_device_info`, device string/scalar helpers, `GGML_CL11_DEVICES` filtering, AMD generation detection, `cl11_tuning_for`, `cl11_config`, `cl11_mmx` parsing/validation and the device probe helper to `src/backends/opencl11/device.{h,cpp}`. `ggml-cl11.cpp` now keeps a registry compatibility shim that materializes the existing ggml `cl11_device_context` objects from backend-probed device info; context/program/buffer/executor state remains in ggml for later steps.
 
+Step 2 done (2026-10-09): moved OpenCL error strings and lazy `cl_context` / in-order `cl_command_queue` creation, including `GGML_CL11_PROFILE` and `GGML_CL11_LAUNCH_LOG` flag capture, to `src/backends/opencl11/context.{h,cpp}`. `ggml-cl11.cpp` keeps a thin `cl11_ensure_context` compatibility shim because later Phase 2 steps still store context, queue, profiling, program, buffer and executor state on the ggml device wrapper.
+
 ## 6. リスクと未決
 
 | 項目 | リスク | 未決 / 提案 |

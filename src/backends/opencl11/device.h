@@ -107,7 +107,6 @@ T cl11_device_val(cl_device_id dev, cl_device_info param, T def = T()) {
     return v;
 }
 
-const char * cl11_err_str(cl_int err);
 cl11_tuning cl11_tuning_for(const cl11_device_info & info);
 bool cl11_mmx_parse(const std::string & spec_in, cl11_mmx & m);
 bool cl11_mmx_valid(const cl11_mmx & m, size_t local_mem, size_t max_wg, std::string & why);

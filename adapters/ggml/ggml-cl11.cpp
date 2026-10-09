@@ -27,6 +27,7 @@
 #include "ggml-backend-impl.h"
 
 #include "ggml-cl11-kernels.h" // generated: ggml_cl11_sources[] (the .cl files)
+#include "opencl11/context.h"
 #include "opencl11/device.h"
 
 #include <algorithm>
@@ -641,22 +642,9 @@ static bool cl11_ensure_context(cl11_device_context * c) {
         return false;
     }
 
-    cl_int err = CL_SUCCESS;
-    const cl_context_properties props[] = { CL_CONTEXT_PLATFORM, (cl_context_properties) c->info.platform, 0 };
-    c->context = clCreateContext(props, 1, &c->info.device, nullptr, nullptr, &err);
-    if (err != CL_SUCCESS) {
-        GGML_LOG_ERROR("%s: clCreateContext failed for %s: %s\n", __func__, c->name.c_str(), cl11_err_str(err));
-        c->failed = true;
-        return false;
-    }
-    c->profile = getenv("GGML_CL11_PROFILE") != nullptr;
-    c->launch_log = getenv("GGML_CL11_LAUNCH_LOG") != nullptr;
-    c->queue = clCreateCommandQueue(c->context, c->info.device, c->profile ? CL_QUEUE_PROFILING_ENABLE : 0, &err);
-    if (err != CL_SUCCESS) {
-        GGML_LOG_ERROR("%s: clCreateCommandQueue failed for %s: %s\n", __func__, c->name.c_str(), cl11_err_str(err));
-        clReleaseContext(c->context);
-        c->context = nullptr;
-        c->failed = true;
+    // Compatibility shim: ggml still owns the device context struct until later Phase 2 steps,
+    // while OpenCL context/queue creation now lives in the OpenCL11 backend.
+    if (!cl11_ensure_runtime_context(c->info, c->name.c_str(), c->context_ready, c->failed, c->context, c->queue, c->profile, c->launch_log)) {
         return false;
     }
 
@@ -699,7 +687,6 @@ static bool cl11_ensure_context(cl11_device_context * c) {
         c->mvs_min_k = std::max(0, atoi(env));
     }
 
-    c->context_ready = true;
     return true;
 }
 

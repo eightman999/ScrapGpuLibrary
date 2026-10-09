@@ -22,6 +22,7 @@ endif()
 if (SCRAPGPU_BUILD_OPENCL11)
     find_package(OpenCL REQUIRED)
     add_library(scrapgpu_opencl11 STATIC
+        src/backends/opencl11/context.cpp
         src/backends/opencl11/device.cpp)
     target_include_directories(scrapgpu_opencl11 PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/src/backends"

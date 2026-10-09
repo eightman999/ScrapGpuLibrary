@@ -33,6 +33,7 @@ endif()
 
 if (NOT TARGET scrapgpu_opencl11)
     add_library(scrapgpu_opencl11 STATIC
+                "${CL11_OPENCL11_DIR}/context.cpp"
                 "${CL11_OPENCL11_DIR}/device.cpp")
     get_filename_component(CL11_BACKENDS_DIR "${CL11_OPENCL11_DIR}/.." ABSOLUTE)
     target_include_directories(scrapgpu_opencl11 PUBLIC "${CL11_BACKENDS_DIR}" "${CL11_OPENCL11_DIR}")
