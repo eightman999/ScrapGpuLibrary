@@ -35,11 +35,12 @@ ScrapGpuLibrary
 
 | パス | 内容 |
 | --- | --- |
-| `src/backends/opencl11/` | OpenCL 1.1 バックエンド。device（能力・世代・調整値）、context（queue・program の遅延生成）、kernels（カーネル表・program build・`.cl` の埋め込み）、buffer（確保・上限・遅延確保の probe）、executor（起動とプロファイル）。ggml の include はありません |
-| `src/core/` | ggml と OpenCL に依存しない共通層。dtype / layout の定義とヘルパー、ABI 版、op の契約検証、backend の登録 |
+| `src/backends/opencl11/` | OpenCL 1.1 バックエンド。device（能力・世代・調整値）、context（queue・program の遅延生成）、kernels（カーネル表・program build・`.cl` の埋め込み）、buffer（確保・上限・遅延確保の probe）、executor（起動とプロファイル）、device_state（デバイスの実行時の状態）、tensor_abi（カーネルに渡す記述子）。ggml の include はありません |
+| `src/tensor/` | ggml と OpenCL に依存しない tensor モジュール（dtype、TensorDesc、ビュー・転置・ブロードキャスト、除算なしの添字、R32 の配置） |
+| `src/core/` | ggml と OpenCL に依存しない共通層。ABI 版、op の契約検証、backend の登録、CPU 参照実装（`src/core/ref/`：全演算と Q4_0 / Q8_0 / Q4_K / Q6_K の量子化・逆量子化） |
 | `include/scrapgpu/` | 公開の C API（`scrapgpu_` 接頭辞）と契約のヘッダ |
 | `adapters/ggml/` | ggml adapter。CL11 のバックエンド本体（`ggml-cl11.cpp`）と検証ツール（`mvm_check`、`attn_check`、`kepler-sweep`） |
-| `tests/core/` | 契約テスト |
+| `tests/core/`、`tests/tensor/`、`tests/ref/` | 契約テスト、tensor モジュールの試験、CPU 参照実装の試験（いずれも llama.cpp なしで動く） |
 
 ### ビルド
 

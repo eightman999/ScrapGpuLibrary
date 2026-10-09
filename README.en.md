@@ -35,11 +35,12 @@ The first result is CL11, a ggml backend that runs on OpenCL 1.1 alone. Version 
 
 | Path | Content |
 | --- | --- |
-| `src/backends/opencl11/` | The OpenCL 1.1 backend: device (capabilities, generation, tuning), context (lazy queue and program creation), kernels (kernel table, program build, `.cl` embedding), buffer (allocation, limits, lazy-allocation probe), executor (launch and profiling). No ggml includes |
-| `src/core/` | The common layer that depends on neither ggml nor OpenCL: dtype / layout definitions and helpers, the ABI version, op contract validation, backend registration |
+| `src/backends/opencl11/` | The OpenCL 1.1 backend: device (capabilities, generation, tuning), context (lazy queue and program creation), kernels (kernel table, program build, `.cl` embedding), buffer (allocation, limits, lazy-allocation probe), executor (launch and profiling), device_state (the runtime state of a device), tensor_abi (the descriptors passed to the kernels). No ggml includes |
+| `src/tensor/` | The tensor module, free of ggml and OpenCL: dtype, TensorDesc, views / transposition / broadcasting, division-free indexing, the R32 layout |
+| `src/core/` | The common layer that depends on neither ggml nor OpenCL: the ABI version, op contract validation, backend registration, and the CPU reference implementation (`src/core/ref/`: every op, Q4_0 / Q8_0 / Q4_K / Q6_K quantization and dequantization) |
 | `include/scrapgpu/` | The public C API (`scrapgpu_` prefix) and the contract headers |
 | `adapters/ggml/` | The ggml adapter: the CL11 backend itself (`ggml-cl11.cpp`) and the verification tools (`mvm_check`, `attn_check`, `kepler-sweep`) |
-| `tests/core/` | The contract tests |
+| `tests/core/`, `tests/tensor/`, `tests/ref/` | The contract tests, the tensor module tests and the CPU reference tests (all without llama.cpp) |
 
 ### Building
 

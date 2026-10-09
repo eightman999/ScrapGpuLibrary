@@ -41,12 +41,12 @@ ggml を使わずに C API だけでテンソル演算を GPU で実行できる
 
 | 順 | 内容 | 主なファイル |
 | --- | --- | --- |
-| S1 | デバイスの実行時の状態（context、queue、プログラム、カーネル、調整値、定数サブバッファ、作業用バッファ、実行の状態）をバックエンドの `cl11_device` に移す。ggml のデバイスは `cl11_device` を指すだけにする | `src/backends/opencl11/device_state.*`、`ggml-cl11.cpp` |
-| S2 | `cl11_tensor` と、記述子（`cl11_td`）・除算なしの添字（`cl11_fastdiv_init`）・ブロードキャスト（`cl11_bcast`）をバックエンドへ。adapter は変換だけ | `src/backends/opencl11/tensor.*` |
+| S1 | デバイスの実行時の状態（context、queue、プログラム、カーネル、調整値、定数サブバッファ、作業用バッファ、実行の状態）をバックエンドの `cl11_device` に移す。ggml のデバイスは `cl11_device` を指すだけにする | `src/backends/opencl11/device_state.*`、`ggml-cl11.cpp`（済み） |
+| S2 | ggml に依存しない tensor モジュール（Phase 3.1）。TensorDesc・dtype・layout・ビュー・ブロードキャスト・除算なしの添字・R32 の配置を `src/tensor/` に、カーネルに渡す記述子を `src/backends/opencl11/tensor_abi.h` に。adapter は変換だけ | `src/tensor/*`、`src/backends/opencl11/tensor_abi.h`（済み） |
 | S3 | R32 の詰め替え（pack / unpack / 部分転送）をバックエンドへ | `src/backends/opencl11/r32.*` |
 | S4 | 演算（`cl11_op_*`）と対応判定の ggml に依存しない部分をバックエンドへ | `src/backends/opencl11/ops.*` |
 | S5 | 公開 API：stream、`scrapgpu_opencl11_register`（vtable の実装）、`scrapgpu_op_execute`、`scrapgpu_tensor_upload / download`、`op_supported`、1 演算 1 ノードの plan | `include/scrapgpu/*.h`、`src/core/*`、`src/backends/opencl11/api.cpp` |
-| S6 | CPU 参照実装（全演算と Q4_0 / Q8_0 / Q4_K / Q6_K の逆量子化）と、演算ごとの単体試験（GPU と参照を NMSE で比べる）。ggml を使わない例（`examples/standalone_matmul.c`） | `src/core/ref/*`、`tests/ops/*`、`examples/*` |
+| S6 | CPU 参照実装（全演算と Q4_0 / Q8_0 / Q4_K / Q6_K の逆量子化）と、演算ごとの単体試験（GPU と参照を NMSE で比べる）。ggml を使わない例（`examples/standalone_matmul.c`） | `src/core/ref/*`（CPU 参照実装と試験は済み。ggml の CPU と 112 ケース一致、`adapters/ggml/tools/ref_check`）、`tests/ops/*`、`examples/*` |
 
 1 段階 1 コミットです。S6 の CPU 参照実装は S1〜S5 と独立しているので並行して作れます。各段階で、`-Wall -Wextra` で警告のないビルド、`test-backend-ops` の 3 調整（既定・`FORCE_GEN=kepler`・`fermi`）、`mvm_check` 18 / 18、`attn_check` 8 / 8、`ctest`、`clBuildProgram` のソースとオプションの不変、`src/backends/opencl11`・`src/core`・`include/scrapgpu`・`tests/ops`・`examples` に ggml の include がないことを確認します。
 
