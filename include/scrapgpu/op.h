@@ -82,6 +82,8 @@ typedef struct scrapgpu_rope_params {
     float attn_factor;
     float beta_fast;
     float beta_slow;
+    /* Optional tensors are also passed as desc->inputs[2] (F32) and later slots; when non-NULL these must
+     * describe the same tensor as the matching inputs[] entry (reference reads inputs[] only). */
     const scrapgpu_tensor_desc * freq_factors;
     const scrapgpu_tensor_desc * n_offs;
 } scrapgpu_rope_params;
@@ -89,6 +91,7 @@ typedef struct scrapgpu_rope_params {
 typedef struct scrapgpu_soft_max_params {
     size_t struct_size;
     float scale;
+    /* Optional mask: also desc->inputs[1] (F32/F16); when non-NULL must match that entry (reference uses inputs[]). */
     const scrapgpu_tensor_desc * mask;
 } scrapgpu_soft_max_params;
 
@@ -153,6 +156,11 @@ typedef struct scrapgpu_cpy_params {
     size_t struct_size;
     int allow_transpose;
 } scrapgpu_cpy_params;
+
+typedef struct scrapgpu_rms_norm_params {
+    size_t struct_size;
+    float eps;
+} scrapgpu_rms_norm_params;
 
 typedef struct scrapgpu_mul_mat_params {
     size_t struct_size;

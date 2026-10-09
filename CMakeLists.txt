@@ -9,6 +9,9 @@ option(SCRAPGPU_BUILD_TESTS "Build ScrapGpu contract tests" ON)
 if (SCRAPGPU_BUILD_CORE)
     add_library(scrapgpu_core
         src/core/op.cpp
+        src/core/ref/f16.cpp
+        src/core/ref/ops.cpp
+        src/core/ref/quant.cpp
         src/core/registry.cpp
         src/core/status.cpp
         src/core/tensor.cpp)
@@ -63,6 +66,14 @@ if (SCRAPGPU_BUILD_TESTS AND SCRAPGPU_BUILD_CORE)
     add_executable(scrapgpu_public_headers_cpp tests/core/public_headers_cpp.cpp)
     target_link_libraries(scrapgpu_public_headers_cpp PRIVATE scrapgpu_core)
     add_test(NAME scrapgpu_public_headers_cpp COMMAND scrapgpu_public_headers_cpp)
+
+    add_executable(scrapgpu_ref_ops_tests tests/ref/ref_ops_tests.cpp)
+    target_link_libraries(scrapgpu_ref_ops_tests PRIVATE scrapgpu_core)
+    add_test(NAME scrapgpu_ref_ops_tests COMMAND scrapgpu_ref_ops_tests)
+
+    add_executable(scrapgpu_ref_quant_tests tests/ref/ref_quant_tests.cpp)
+    target_link_libraries(scrapgpu_ref_quant_tests PRIVATE scrapgpu_core)
+    add_test(NAME scrapgpu_ref_quant_tests COMMAND scrapgpu_ref_quant_tests)
 
     add_test(NAME scrapgpu_dependency_check
         COMMAND "${CMAKE_COMMAND}" -DROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_core_dependencies.cmake")

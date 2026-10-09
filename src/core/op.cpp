@@ -88,17 +88,33 @@ scrapgpu_status scrapgpu_op_desc_validate(const scrapgpu_op_desc * desc) {
             return validate_counts(desc, desc->input_count == 2 ? 2 : 1, 1);
         case SCRAPGPU_OP_ROPE:
             if (!has_params(desc, sizeof(scrapgpu_rope_params))) return invalid("ROPE params are missing");
-            return validate_counts(desc, 1, 1);
+            // inputs[]: [x, positions (I32), freq_factors (F32, optional)]; params->freq_factors / n_offs must be
+            // NULL or the same descriptor as the corresponding inputs[] entry (reference uses inputs[]).
+            if (validate_counts(desc, desc->input_count, 1) != SCRAPGPU_STATUS_OK) return SCRAPGPU_STATUS_INVALID_ARGUMENT;
+            if (desc->input_count < 1 || desc->input_count > 3) return invalid("ROPE takes 1 to 3 inputs");
+            if (!is_f16_or_f32(desc->inputs[0])) return invalid("ROPE data must be F32 or F16");
+            if (desc->input_count >= 2 && desc->inputs[1].dtype != SCRAPGPU_DTYPE_I32) return invalid("ROPE positions must be I32");
+            if (desc->input_count >= 3 && !is_f32(desc->inputs[2])) return invalid("ROPE freq factors must be F32");
+            return SCRAPGPU_STATUS_OK;
         case SCRAPGPU_OP_SOFT_MAX:
             if (!has_params(desc, sizeof(scrapgpu_soft_max_params))) return invalid("SOFT_MAX params are missing");
-            return validate_counts(desc, 1, 1);
+            // inputs[]: [x, mask (F32/F16, optional)]; params->mask must be NULL or match inputs[1] (reference uses inputs[]).
+            if (validate_counts(desc, desc->input_count, 1) != SCRAPGPU_STATUS_OK) return SCRAPGPU_STATUS_INVALID_ARGUMENT;
+            if (desc->input_count < 1 || desc->input_count > 2) return invalid("SOFT_MAX takes 1 or 2 inputs");
+            if (!is_f32(desc->inputs[0])) return invalid("SOFT_MAX data must be F32");
+            if (desc->input_count == 2 && !is_f16_or_f32(desc->inputs[1])) return invalid("SOFT_MAX mask must be F32 or F16");
+            return SCRAPGPU_STATUS_OK;
         case SCRAPGPU_OP_GET_ROWS:
             if (!has_params(desc, sizeof(scrapgpu_get_rows_params))) return invalid("GET_ROWS params are missing");
             if (validate_counts(desc, 2, 1) != SCRAPGPU_STATUS_OK) return SCRAPGPU_STATUS_INVALID_ARGUMENT;
             return is_quant_or_float_weight(desc->inputs[0]) && desc->inputs[1].dtype == SCRAPGPU_DTYPE_I32 && is_f32(desc->outputs[0]) ? SCRAPGPU_STATUS_OK : invalid("GET_ROWS dtype contract failed");
         case SCRAPGPU_OP_SET_ROWS:
             if (!has_params(desc, sizeof(scrapgpu_set_rows_params))) return invalid("SET_ROWS params are missing");
-            return validate_counts(desc, 3, 1);
+            if (validate_counts(desc, 2, 1) != SCRAPGPU_STATUS_OK) return SCRAPGPU_STATUS_INVALID_ARGUMENT;
+            return is_f16_or_f32(desc->inputs[0]) && is_f16_or_f32(desc->outputs[0]) &&
+                           (desc->inputs[1].dtype == SCRAPGPU_DTYPE_I32 || desc->inputs[1].dtype == SCRAPGPU_DTYPE_I64)
+                ? SCRAPGPU_STATUS_OK
+                : invalid("SET_ROWS dtype contract failed");
         case SCRAPGPU_OP_CPY:
         case SCRAPGPU_OP_DUP:
         case SCRAPGPU_OP_CONT:

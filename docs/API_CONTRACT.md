@@ -62,6 +62,14 @@
 - `scrapgpu_op_supported(device, op, &reason)`：対応しない理由を返す。**暗黙の転送や CPU での実行はしない**。CPU に回すかどうかは adapter が決める（ggml ではスケジューラが行う）。
 - 正しさの基準：op ごとに CPU の参照実装との NMSE の許容値を文書に持つ（llama.cpp の `test-backend-ops` と同じ値を出発点にする）。
 
+### Optional inputs（補助テンソル）
+
+ROPE と SOFT_MAX の任意入力は、`desc->inputs[]` の固定順で渡す。ROPE は `[x, positions (I32), freq_factors (F32, 任意)]`、SOFT_MAX は `[x, mask (F32/F16, 任意)]`。パラメータ構造体の `scrapgpu_rope_params.freq_factors` / `n_offs` および `scrapgpu_soft_max_params.mask` は NULL にするか、対応する `inputs[]` 要素と同一内容の `tensor_desc` を指す（参照実装は `inputs[]` のポインタだけを読む）。
+
+### SET_ROWS
+
+入力は 2 つ（コピー元の行テンソル、行インデックス I32/I64）、出力は 1 つ（更新先 `dst`）。ggml と同様、インデックスで指定されなかった行は `dst` の既存内容を保持する（インプレース更新）。
+
 ## 8. KernelVariant（公開しない）
 
 - バックエンド内部の概念。op・型・物理配置・形の区分（mat-vec か mat-mat か、`ne11` の大きさ）・世代の調整値から、実行するカーネルを決める。
