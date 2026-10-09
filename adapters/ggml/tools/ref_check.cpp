@@ -1,12 +1,12 @@
 // Cross-check scrapgpu_ref_execute against ggml's CPU backend (one graph node per case).
 //
 // Build:
-//   c++ -std=c++17 -O1 -I/Users/eightman/dev/sandbox/llama.cpp-b11384/ggml/include -Iinclude \
+//   c++ -std=c++17 -O1 -I<llama.cpp>/ggml/include -Iinclude \
 //     adapters/ggml/tools/ref_check.cpp src/core/*.cpp src/core/ref/*.cpp src/tensor/*.cpp -Isrc -Isrc/core/ref \
-//     -L/Users/eightman/dev/sandbox/llama.cpp-b11384/build-dl/bin -lggml -lggml-base \
-//     -Wl,-rpath,/Users/eightman/dev/sandbox/llama.cpp-b11384/build-dl/bin -o _w/ref_check
+//     -L<llama.cpp>/build-dl/bin -lggml -lggml-base \
+//     -Wl,-rpath,<llama.cpp>/build-dl/bin -o _w/ref_check
 // Run:
-//   GGML_LIB_DIR=/Users/eightman/dev/sandbox/llama.cpp-b11384/build-dl/bin ./_w/ref_check
+//   GGML_LIB_DIR=<llama.cpp>/build-dl/bin ./_w/ref_check
 //
 // NMSE threshold 1e-7 for float ops; 5e-4 when src0 of MUL_MAT is quantized (ggml's CPU path
 // quantizes src1 to Q8_0 for the dot product, so results differ slightly from a pure dequant*F32 ref).
