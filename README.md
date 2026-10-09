@@ -33,7 +33,7 @@ ScrapGpuLibrary
 
 - OpenCL 1.1 のホスト API と OpenCL C 1.1 のカーネルだけで書いています。fp16 演算、サブグループ、OpenCL 1.2 以降の API は使いません。
 - 検証した GPU は、NVIDIA 390 ドライバの GeForce GT 430（Fermi）・GT 710 / GT 730（Kepler）と、Mesa の Radeon Pro WX 2100（GCN、Clover と rusticl）・Radeon RX 6400（RDNA2、rusticl）です。調整値は GPU の世代ごとに `cl11_tuning_for()` に集めています（Fermi、Kepler、AMD GCN は測定した値、AMD RDNA2 は AMD 共通の設定だけ）。
-- Llama / Qwen2 / Qwen3 系のモデルを全層オフロードできます（Flash Attention は非対応）。Q4_0 / Q8_0 / Q4_K / Q6_K の重みは GPU 向けの配置に並べ替えて持ちます。対応していない op は自動で CPU に回ります。
+- Llama / Qwen2 / Qwen3 系のモデルを全層オフロードできます（Flash Attention は非対応）。LFM2 / LFM2-MoE（短い畳み込み、`MUL_MAT_ID`）も全 op が載ります（Mac での確認まで。TB250 の GPU では未測定）。Q4_0 / Q8_0 / Q4_K / Q6_K の重みは GPU 向けの配置に並べ替えて持ちます。対応していない op は自動で CPU に回ります。
 - 対応 op、性能、環境変数、制約、試して採用しなかった手法は [docs/CL11.md](docs/CL11.md) を参照してください。
 - llama.cpp への組み込み方（ツリー外プラグイン、ツリー内パッチ）は [adapters/ggml/](adapters/ggml/) を参照してください。
 

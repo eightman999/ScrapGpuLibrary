@@ -29,9 +29,7 @@
     g = gq;                                                                                           \
     const int i3 = FDIV(g, tc, 2);                                                                    \
     const int i2 = g - i3 * tc.ne2;                                                                   \
-    const int i02 = FDIV_RAW(i2, bc.m2, bc.l2);                                                       \
-    const int i03 = FDIV_RAW(i3, bc.m3, bc.l3);                                                       \
-    global const uchar * abase = pa + ta.off + i02 * ta.nb2 + i03 * ta.nb3;                           \
+    MVR_ABASE                                                                                         \
     const int M   = ta.ne1;                                                                           \
     const int nb  = ta.ne0 >> 8;                                                                      \
     const int ngrp = (M + 31) >> 5;                                                                   \
@@ -455,4 +453,43 @@ kernel void k_mvrc_q6_k(MVR_ARGS_C) {
 #undef NWR
 #undef NRR
 #undef WG_MVR
+
+// MUL_MAT_ID with one token per column (generation): see the k_mvri_* kernels of mul_mv_r.cl
+#undef MVR_ABASE
+#define MVR_ABASE MVR_ABASE_IDS
+
+#define WG_MVR WG_MVR_Q4_K
+#define XLDG   LDG_Q4_K
+#define NRR    NRR_Q4_K
+#define NWR    (WG_MVR / 32)
+#define XLO XLO_G
+kernel void k_mvki_q4_k(MVR_ARGS_ID) {
+    MVK_BEGIN(8, global, MVR_XG)
+    if (full) { MVK_Q4_LOOP(RS_FULL) } else { MVK_Q4_LOOP(RS_VAR) }
+    MVR_END
+}
+#undef XLO
+#undef XLDG
+#undef NWR
+#undef NRR
+#undef WG_MVR
+
+#define WG_MVR WG_MVR_Q6_K
+#define XLDG   LDG_Q6_K
+#define NRR    NRR_Q6_K
+#define NWR    (WG_MVR / 32)
+#define XLO XLO_G
+kernel void k_mvki_q6_k(MVR_ARGS_ID) {
+    MVK_BEGIN(12, global, MVR_XG)
+    if (full) { MVK_Q6_LOOP(RS_FULL) } else { MVK_Q6_LOOP(RS_VAR) }
+    MVR_END
+}
+#undef XLO
+#undef XLDG
+#undef NWR
+#undef NRR
+#undef WG_MVR
+
+#undef MVR_ABASE
+#define MVR_ABASE MVR_ABASE_BCAST
 #endif // CL11_NO_K

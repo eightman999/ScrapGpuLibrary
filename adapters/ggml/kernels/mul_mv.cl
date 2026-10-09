@@ -7,6 +7,15 @@
 // of WG_MV threads computes WG_MV/tpr outputs. The partial sums are reduced through local memory.
 
 #ifndef CL11_NO_BASE
+// i02, i03: the slice of src0. MUL_MAT: the broadcast of the batch dimensions. MUL_MAT_ID (k_mvi_*, generation): dst is [rows, slots, tokens]
+// and the expert of (slot i1, token i2) is read from the ids (I32, [slots, tokens]) by the kernel.
+#define MV_SLICE_BCAST                                                                        \
+        const int i02 = FDIV_RAW(i2, bc.m2, bc.l2);                                           \
+        const int i03 = FDIV_RAW(i3, bc.m3, bc.l3);
+#define MV_SLICE_IDS                                                                          \
+        const int i02 = clamp(*(global const int *)(pids + tids.off + i1 * tids.nb0 + i2 * tids.nb1), 0, ta.ne2 - 1); \
+        const int i03 = 0;
+#define MV_SLICE MV_SLICE_BCAST
 #define MV_BEGIN                                                                              \
     local float sh[WG_MV];                                                                    \
     const int lid  = (int)get_local_id(0);                                                    \
@@ -18,8 +27,7 @@
     int i0 = 0, i1 = 0, i2 = 0, i3 = 0;                                                       \
     if (valid) {                                                                              \
         SPLIT4(r, tc, i0, i1, i2, i3);                                                        \
-        const int i02 = FDIV_RAW(i2, bc.m2, bc.l2);                                           \
-        const int i03 = FDIV_RAW(i3, bc.m3, bc.l3);                                           \
+        MV_SLICE                                                                              \
         arow = pa + ta.off + i0 * ta.nb1 + i02 * ta.nb2 + i03 * ta.nb3;                       \
         brow = pb + tb.off + i1 * tb.nb1 + i2 * tb.nb2 + i3 * tb.nb3;                         \
     }                                                                                         \
@@ -44,52 +52,78 @@
 
 // ---- F32 ----
 // the loads of 4 chunks (of 4 elements per thread) are issued together: the rows are short (K cache) and the kernels are latency bound
+#define MV_BODY_F32 \
+    if (valid) { \
+        global const float * af = (global const float *)arow; \
+        int i = lane * 4; \
+        for (; i + 12 * tpr + 4 <= ne00; i += 16 * tpr) { \
+            const float4 a0 = vload4(0, af + i), a1 = vload4(0, af + i + 4 * tpr), a2 = vload4(0, af + i + 8 * tpr), a3 = vload4(0, af + i + 12 * tpr); \
+            const float4 x0 = vload4(0, bf + i), x1 = vload4(0, bf + i + 4 * tpr), x2 = vload4(0, bf + i + 8 * tpr), x3 = vload4(0, bf + i + 12 * tpr); \
+            acc += (dot(a0, x0) + dot(a1, x1)) + (dot(a2, x2) + dot(a3, x3)); \
+        } \
+        for (; i < ne00; i += tpr * 4) { \
+            if (i + 4 <= ne00) { \
+                acc += dot(vload4(0, af + i), vload4(0, bf + i)); \
+            } else { \
+                for (int j = i; j < ne00; ++j) { \
+                    acc += af[j] * bf[j]; \
+                } \
+            } \
+        } \
+    }
+#define MV_BODY_F16 \
+    if (valid) { \
+        global const half * ah = (global const half *)arow; \
+        int i = lane * 4; \
+        for (; i + 12 * tpr + 4 <= ne00; i += 16 * tpr) { \
+            const float4 a0 = vload_half4(0, ah + i), a1 = vload_half4(0, ah + i + 4 * tpr), a2 = vload_half4(0, ah + i + 8 * tpr), a3 = vload_half4(0, ah + i + 12 * tpr); \
+            const float4 x0 = vload4(0, bf + i), x1 = vload4(0, bf + i + 4 * tpr), x2 = vload4(0, bf + i + 8 * tpr), x3 = vload4(0, bf + i + 12 * tpr); \
+            acc += (dot(a0, x0) + dot(a1, x1)) + (dot(a2, x2) + dot(a3, x3)); \
+        } \
+        for (; i < ne00; i += tpr * 4) { \
+            if (i + 4 <= ne00) { \
+                acc += dot(vload_half4(0, ah + i), vload4(0, bf + i)); \
+            } else { \
+                for (int j = i; j < ne00; ++j) { \
+                    acc += vload_half(j, ah) * bf[j]; \
+                } \
+            } \
+        } \
+    }
+
+#define MV_ARGS_ID global uchar * pa, tdesc ta, global uchar * pb, tdesc tb, global uchar * pc, tdesc tc, bcast bc, int tpr, int tprl, global uchar * pids, tdesc tids
+
+// ---- F32 ----
+// the loads of 4 chunks (of 4 elements per thread) are issued together: the rows are short (K cache) and the kernels are latency bound
 kernel void k_mv_f32(MV_ARGS) {
     MV_BEGIN
-    if (valid) {
-        global const float * af = (global const float *)arow;
-        int i = lane * 4;
-        for (; i + 12 * tpr + 4 <= ne00; i += 16 * tpr) {
-            const float4 a0 = vload4(0, af + i), a1 = vload4(0, af + i + 4 * tpr), a2 = vload4(0, af + i + 8 * tpr), a3 = vload4(0, af + i + 12 * tpr);
-            const float4 x0 = vload4(0, bf + i), x1 = vload4(0, bf + i + 4 * tpr), x2 = vload4(0, bf + i + 8 * tpr), x3 = vload4(0, bf + i + 12 * tpr);
-            acc += (dot(a0, x0) + dot(a1, x1)) + (dot(a2, x2) + dot(a3, x3));
-        }
-        for (; i < ne00; i += tpr * 4) {
-            if (i + 4 <= ne00) {
-                acc += dot(vload4(0, af + i), vload4(0, bf + i));
-            } else {
-                for (int j = i; j < ne00; ++j) {
-                    acc += af[j] * bf[j];
-                }
-            }
-        }
-    }
+    MV_BODY_F32
     MV_END
 }
 
 // ---- F16 ----
 kernel void k_mv_f16(MV_ARGS) {
     MV_BEGIN
-    if (valid) {
-        global const half * ah = (global const half *)arow;
-        int i = lane * 4;
-        for (; i + 12 * tpr + 4 <= ne00; i += 16 * tpr) {
-            const float4 a0 = vload_half4(0, ah + i), a1 = vload_half4(0, ah + i + 4 * tpr), a2 = vload_half4(0, ah + i + 8 * tpr), a3 = vload_half4(0, ah + i + 12 * tpr);
-            const float4 x0 = vload4(0, bf + i), x1 = vload4(0, bf + i + 4 * tpr), x2 = vload4(0, bf + i + 8 * tpr), x3 = vload4(0, bf + i + 12 * tpr);
-            acc += (dot(a0, x0) + dot(a1, x1)) + (dot(a2, x2) + dot(a3, x3));
-        }
-        for (; i < ne00; i += tpr * 4) {
-            if (i + 4 <= ne00) {
-                acc += dot(vload_half4(0, ah + i), vload4(0, bf + i));
-            } else {
-                for (int j = i; j < ne00; ++j) {
-                    acc += vload_half(j, ah) * bf[j];
-                }
-            }
-        }
-    }
+    MV_BODY_F16
     MV_END
 }
+
+// ---- MUL_MAT_ID (generation): the expert is read from the ids ----
+#undef MV_SLICE
+#define MV_SLICE MV_SLICE_IDS
+kernel void k_mvi_f32(MV_ARGS_ID) {
+    MV_BEGIN
+    MV_BODY_F32
+    MV_END
+}
+
+kernel void k_mvi_f16(MV_ARGS_ID) {
+    MV_BEGIN
+    MV_BODY_F16
+    MV_END
+}
+#undef MV_SLICE
+#define MV_SLICE MV_SLICE_BCAST
 #endif // CL11_NO_BASE
 
 // =============================================================================================
