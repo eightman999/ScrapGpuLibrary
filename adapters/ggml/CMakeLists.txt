@@ -26,9 +26,26 @@ find_package(OpenCL REQUIRED)
 set(TARGET_NAME ggml-cl11)
 
 if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../src/backends/opencl11/device.cpp")
-    get_filename_component(CL11_OPENCL11_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../src/backends/opencl11" ABSOLUTE)
+    get_filename_component(CL11_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../src" ABSOLUTE)
+    get_filename_component(CL11_PUBLIC_INC "${CMAKE_CURRENT_SOURCE_DIR}/../../include" ABSOLUTE)
+    set(CL11_OPENCL11_DIR "${CL11_SRC_DIR}/backends/opencl11")
 else()
+    # in-tree: install-in-tree.sh copied the sources next to this file (opencl11/, tensor/, scrapgpu/)
+    set(CL11_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+    set(CL11_PUBLIC_INC "${CMAKE_CURRENT_SOURCE_DIR}")
     set(CL11_OPENCL11_DIR "${CMAKE_CURRENT_SOURCE_DIR}/opencl11")
+endif()
+
+# the ggml-independent tensor descriptors and their math
+if (NOT TARGET scrapgpu_tensor)
+    add_library(scrapgpu_tensor STATIC
+                "${CL11_SRC_DIR}/tensor/tensor.cpp")
+    target_include_directories(scrapgpu_tensor PUBLIC "${CL11_SRC_DIR}" "${CL11_PUBLIC_INC}")
+    target_compile_features(scrapgpu_tensor PUBLIC cxx_std_17)
+    set_target_properties(scrapgpu_tensor PROPERTIES
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON
+        POSITION_INDEPENDENT_CODE ON)
 endif()
 
 if (NOT TARGET scrapgpu_opencl11)
@@ -144,7 +161,7 @@ else()
     install(TARGETS ${TARGET_NAME} LIBRARY DESTINATION lib)
 endif()
 
-target_link_libraries(${TARGET_NAME} PRIVATE scrapgpu_opencl11 ${OpenCL_LIBRARIES})
+target_link_libraries(${TARGET_NAME} PRIVATE scrapgpu_opencl11 scrapgpu_tensor ${OpenCL_LIBRARIES})
 target_include_directories(${TARGET_NAME} PRIVATE ${OpenCL_INCLUDE_DIRS})
 
 # the host code only uses the OpenCL 1.1 API (Khronos headers: hide everything newer)

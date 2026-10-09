@@ -32,6 +32,8 @@
 #include "opencl11/device_state.h"
 #include "opencl11/executor.h"
 #include "opencl11/kernels.h"
+#include "opencl11/tensor.h"
+#include "tensor/tensor.h"
 
 #include <algorithm>
 #include <cctype>
@@ -54,52 +56,9 @@
 // Device information, context creation, the programs / kernels and the executor state live in src/backends/opencl11/
 // (cl11_device). ggml keeps the API objects: the buffer wrapper, the op translation / dispatch and the registry.
 
-// tensor descriptor passed to the kernels by value, must match `tdesc` in src/backends/opencl11/kernels/common.cl
-struct cl11_td {
-    int32_t  ne[4];
-    int32_t  nb[4];
-    int32_t  off;
-    uint32_t fm[4]; // fast division by ne[i]
-    uint32_t fl[4];
-};
-static_assert(sizeof(cl11_td) == 17 * sizeof(int32_t), "cl11_td layout");
-
-// magic numbers m, l such that n / d == (mulhi(n, m) + n) >> l for 0 <= n < 2^31
-static void cl11_fastdiv_init(uint32_t d, uint32_t & m, uint32_t & l) {
-    m = 0;
-    l = 0;
-    if (d == 0) {
-        return;
-    }
-    while (l < 32 && ((uint64_t) 1 << l) < d) {
-        ++l;
-    }
-    m = (uint32_t) ((((uint64_t) 1 << 32) * (((uint64_t) 1 << l) - d)) / d + 1);
-}
-
-// must match `bcast` in src/backends/opencl11/kernels/common.cl
-struct cl11_bcast {
-    int32_t  r2, r3;
-    uint32_t m2, l2, m3, l3;
-    int32_t  tiles;
-    uint32_t mt, lt;
-    int32_t  tiles2;
-    uint32_t mt2, lt2;
-};
-static_assert(sizeof(cl11_bcast) == 12 * sizeof(int32_t), "cl11_bcast layout");
-
-static cl11_bcast cl11_make_bcast(int64_t r2, int64_t r3, int64_t tiles, int64_t tiles2) {
-    cl11_bcast b = {};
-    b.r2 = (int32_t) r2;
-    b.r3 = (int32_t) r3;
-    cl11_fastdiv_init((uint32_t) r2, b.m2, b.l2);
-    cl11_fastdiv_init((uint32_t) r3, b.m3, b.l3);
-    b.tiles = (int32_t) tiles;
-    cl11_fastdiv_init((uint32_t) tiles, b.mt, b.lt);
-    b.tiles2 = (int32_t) tiles2;
-    cl11_fastdiv_init((uint32_t) tiles2, b.mt2, b.lt2);
-    return b;
-}
+// The descriptor passed to the kernels by value (cl11_td / cl11_bcast / cl11_padp) is built from a
+// sgt::TensorDesc by the inline helpers of src/backends/opencl11/tensor_abi.h; the tensor math
+// (fast division, broadcast factors, contiguity, the R32 eligibility) is in src/tensor.
 
 // The ggml device wrapper: only the ggml objects (buffer type, device, registry) and the runtime state of the device, which lives in
 // src/backends/opencl11 (cl11_device: OpenCL context / queue, programs / kernels, tuning, caches, scratch buffers, executor).
@@ -160,23 +119,42 @@ static size_t cl11_tensor_offset(const ggml_tensor * t) {
     return (size_t) ((const char *) t->data - (const char *) CL11_BASE);
 }
 
-struct cl11_tref {
-    cl_mem  mem;
-    cl11_td td;
-};
+// the ggml types this backend handles, as the dtype of the tensor module (the other types are only
+// met by tensors of ops the backend does not support)
+static scrapgpu_dtype cl11_dtype_of(ggml_type type) {
+    switch (type) {
+        case GGML_TYPE_F32:  return SCRAPGPU_DTYPE_F32;
+        case GGML_TYPE_F16:  return SCRAPGPU_DTYPE_F16;
+        case GGML_TYPE_I32:  return SCRAPGPU_DTYPE_I32;
+        case GGML_TYPE_I64:  return SCRAPGPU_DTYPE_I64;
+        case GGML_TYPE_I16:  return SCRAPGPU_DTYPE_I16;
+        case GGML_TYPE_BF16: return SCRAPGPU_DTYPE_BF16;
+        case GGML_TYPE_Q4_0: return SCRAPGPU_DTYPE_Q4_0;
+        case GGML_TYPE_Q8_0: return SCRAPGPU_DTYPE_Q8_0;
+        case GGML_TYPE_Q4_K: return SCRAPGPU_DTYPE_Q4_K;
+        case GGML_TYPE_Q6_K: return SCRAPGPU_DTYPE_Q6_K;
+        default:             return (scrapgpu_dtype) -1;
+    }
+}
+
+// the tensor descriptor (on the stack) of a ggml_tensor; layout stays NATURAL: whether the tensor is
+// stored repacked is decided per use by cl11_repacked()
+static sgt::TensorDesc cl11_desc(const ggml_tensor * t) {
+    sgt::TensorDesc d;
+    d.dtype = cl11_dtype_of(t->type);
+    for (int i = 0; i < 4; ++i) {
+        d.ne[i] = t->ne[i];
+        d.nb[i] = t->nb[i];
+    }
+    d.offset = (uint64_t) cl11_tensor_offset(t);
+    return d;
+}
 
 static cl11_tref cl11_ref(const ggml_tensor * t) {
     cl11_tref r;
     auto * bctx = (cl11_buffer_context *) cl11_tensor_buffer(t)->context;
     r.mem = bctx->mem;
-    for (int i = 0; i < 4; ++i) {
-        r.td.ne[i] = (int32_t) t->ne[i];
-        r.td.nb[i] = (int32_t) t->nb[i];
-    }
-    r.td.off = (int32_t) cl11_tensor_offset(t);
-    for (int i = 0; i < 4; ++i) {
-        cl11_fastdiv_init((uint32_t) t->ne[i], r.td.fm[i], r.td.fl[i]);
-    }
+    r.td  = cl11_make_td(cl11_desc(t));
     return r;
 }
 
@@ -200,7 +178,7 @@ static cl11_tref cl11_ref(const ggml_tensor * t) {
 //
 
 static bool cl11_rp_type(ggml_type type) {
-    return type == GGML_TYPE_Q4_0 || type == GGML_TYPE_Q8_0 || type == GGML_TYPE_Q4_K || type == GGML_TYPE_Q6_K;
+    return sgt::dtype_is_repackable(cl11_dtype_of(type));
 }
 
 static int cl11_rkind(ggml_type type) {
@@ -213,11 +191,7 @@ static int cl11_rkind(ggml_type type) {
 }
 
 static bool cl11_repacked(const ggml_tensor * t) {
-    if (t == nullptr || !cl11_rp_type(t->type) || t->view_src != nullptr || !ggml_is_contiguous(t)) {
-        return false;
-    }
-    // the slices must keep the 16-byte alignment of the 128-bit loads
-    return t->ne[2] * t->ne[3] == 1 || (t->nb[2] % 16 == 0 && t->nb[3] % 16 == 0);
+    return t != nullptr && t->view_src == nullptr && sgt::r32_eligible(cl11_desc(t));
 }
 
 // a view of a repacked tensor cannot be addressed (the kernels and the transfers know the layout of the whole tensor only)
@@ -227,47 +201,13 @@ static void cl11_rp_check_view(const ggml_tensor * t) {
     }
 }
 
-struct cl11_rp_area {
-    int     src;  // first byte of the area in the natural block
-    int     len;  // bytes per block (2: halves, otherwise a multiple of 16)
-    uint8_t xr;   // xor mask applied to the bytes
-};
-
-struct cl11_rp_geom {
-    int          nb;      // blocks per row
-    int          bs;      // bytes of a block in the natural layout
-    int          na;      // number of areas
-    cl11_rp_area area[3];
-    int64_t      M;       // rows per slice
-    size_t       rowb;    // bytes of a row in the natural layout
-};
-
-static cl11_rp_geom cl11_rp_geometry(const ggml_tensor * t) {
-    cl11_rp_geom g = {};
-    g.M    = t->ne[1];
-    g.bs   = (int) ggml_type_size(t->type);
-    g.nb   = (int) (t->ne[0] / ggml_blck_size(t->type));
-    g.rowb = (size_t) g.nb * g.bs;
-    switch (t->type) {
-        case GGML_TYPE_Q8_0: g.na = 2; g.area[0] = {  2, 32, 0x80 }; g.area[1] = {   0,   2, 0 }; break;
-        case GGML_TYPE_Q4_0: g.na = 2; g.area[0] = {  2, 16, 0    }; g.area[1] = {   0,   2, 0 }; break;
-        case GGML_TYPE_Q4_K: g.na = 2; g.area[0] = { 16, 128, 0   }; g.area[1] = {   0,  16, 0 }; break;
-        default:             g.na = 3; g.area[0] = {  0, 192, 0   }; g.area[1] = { 192, 16, 0x80 }; g.area[2] = { 208, 2, 0 }; break;
-    }
-    return g;
-}
-
-// bytes per block of the areas before the area k
-static size_t cl11_rp_area_before(const cl11_rp_geom & G, int k) {
-    size_t n = 0;
-    for (int i = 0; i < k; ++i) {
-        n += (size_t) G.area[i].len;
-    }
-    return n;
+// the R32 geometry of the tensor (sgt::r32_geom: blocks per row, block bytes, the areas, M, rowb)
+static sgt::r32_geom cl11_rp_geometry(const ggml_tensor * t) {
+    return sgt::r32_geometry(cl11_desc(t));
 }
 
 // natural -> repacked: `nrows` consecutive rows (a multiple of 32, except at the end of a slice) -> the buffers of the areas
-static void cl11_rp_pack(const cl11_rp_geom & G, const uint8_t * nat, int64_t nrows, uint8_t * const * out) {
+static void cl11_rp_pack(const sgt::r32_geom & G, const uint8_t * nat, int64_t nrows, uint8_t * const * out) {
     for (int64_t g0 = 0; g0 < nrows; g0 += 32) {
         const int rs = (int) std::min<int64_t>(32, nrows - g0);
         for (int lane = 0; lane < rs; ++lane) {
@@ -275,7 +215,7 @@ static void cl11_rp_pack(const cl11_rp_geom & G, const uint8_t * nat, int64_t nr
             for (int b = 0; b < G.nb; ++b) {
                 const uint8_t * p = row + (size_t) b * G.bs;
                 for (int k = 0; k < G.na; ++k) {
-                    const cl11_rp_area & A = G.area[k];
+                    const sgt::r32_area & A = G.area[k];
                     uint8_t * og = out[k] + (size_t) (g0 / 32) * 32 * G.nb * A.len;
                     if (A.len == 2) {
                         memcpy(og + ((size_t) b * rs + lane) * 2, p + A.src, 2);
@@ -296,7 +236,7 @@ static void cl11_rp_pack(const cl11_rp_geom & G, const uint8_t * nat, int64_t nr
 }
 
 // repacked -> natural
-static void cl11_rp_unpack(const cl11_rp_geom & G, const uint8_t * const * in, int64_t nrows, uint8_t * nat) {
+static void cl11_rp_unpack(const sgt::r32_geom & G, const uint8_t * const * in, int64_t nrows, uint8_t * nat) {
     for (int64_t g0 = 0; g0 < nrows; g0 += 32) {
         const int rs = (int) std::min<int64_t>(32, nrows - g0);
         for (int lane = 0; lane < rs; ++lane) {
@@ -304,7 +244,7 @@ static void cl11_rp_unpack(const cl11_rp_geom & G, const uint8_t * const * in, i
             for (int b = 0; b < G.nb; ++b) {
                 uint8_t * p = row + (size_t) b * G.bs;
                 for (int k = 0; k < G.na; ++k) {
-                    const cl11_rp_area & A = G.area[k];
+                    const sgt::r32_area & A = G.area[k];
                     const uint8_t * ig = in[k] + (size_t) (g0 / 32) * 32 * G.nb * A.len;
                     if (A.len == 2) {
                         memcpy(p + A.src, ig + ((size_t) b * rs + lane) * 2, 2);
@@ -327,7 +267,7 @@ static void cl11_rp_unpack(const cl11_rp_geom & G, const uint8_t * const * in, i
 // copy `size` bytes at byte `offset` of the (natural layout of the) tensor from / to the device. The conversion is done
 // per chunk of whole groups of rows of a slice; a chunk that is only partly written is read, patched and written back.
 static bool cl11_rp_transfer(cl11_device * c, cl_mem mem, const ggml_tensor * t, uint8_t * host, size_t offset, size_t size, bool to_dev) {
-    const cl11_rp_geom G = cl11_rp_geometry(t);
+    const sgt::r32_geom G = cl11_rp_geometry(t);
     const size_t slice_nat = (size_t) G.M * G.rowb;
     const size_t end = offset + size;
     const size_t base = cl11_tensor_offset(t);
@@ -355,7 +295,7 @@ static bool cl11_rp_transfer(cl11_device * c, cl_mem mem, const ggml_tensor * t,
             size_t   an[3] = { 0, 0, 0 }, ao[3] = { 0, 0, 0 };
             for (int k = 0; k < G.na; ++k) {
                 an[k] = (size_t) nrows * G.nb * G.area[k].len;
-                ao[k] = q_slice + (size_t) G.M * G.nb * cl11_rp_area_before(G, k) + (size_t) rA * G.nb * G.area[k].len;
+                ao[k] = q_slice + (size_t) G.M * G.nb * sgt::r32_area_before(G, k) + (size_t) rA * G.nb * G.area[k].len;
                 abuf[k].resize(an[k]);
                 ap[k] = abuf[k].data();
             }
@@ -605,13 +545,16 @@ static bool cl11_fits_int(const ggml_tensor * t) {
     if (t == nullptr) {
         return true;
     }
-    for (int i = 0; i < GGML_MAX_DIMS; ++i) {
-        if (t->ne[i] > INT_MAX || t->nb[i] > INT_MAX) {
-            return false;
+    if (cl11_dtype_of(t->type) == (scrapgpu_dtype) -1) {
+        // a type the tensor module does not know (its nbytes would be 0): the same limits with the ggml sizes
+        for (int i = 0; i < GGML_MAX_DIMS; ++i) {
+            if (t->ne[i] > INT_MAX || t->nb[i] > INT_MAX) {
+                return false;
+            }
         }
+        return ggml_nelements(t) <= INT_MAX - 65536 && ggml_nbytes(t) <= (size_t) INT_MAX - 65536;
     }
-    // (keep a margin: the kernels compute group_index * work_group_size + local_id in 32 bits)
-    return ggml_nelements(t) <= INT_MAX - 65536 && ggml_nbytes(t) <= (size_t) INT_MAX - 65536;
+    return sgt::fits_int32(cl11_desc(t));
 }
 
 // ARGSORT / TOP_K: a row is sorted in local memory (2 x 4 bytes per element, padded to a power of 2)
@@ -995,7 +938,7 @@ static bool cl11_op_soft_max(cl11_device * c, const ggml_tensor * dst) {
         for (int i = 0; i < 4; ++i) {
             mm.td.ne[i] = 1;
             mm.td.nb[i] = 0;
-            cl11_fastdiv_init(1, mm.td.fm[i], mm.td.fl[i]);
+            sgt::fastdiv_init(1, mm.td.fm[i], mm.td.fl[i]);
         }
         mm.td.off = 0;
     }
@@ -1112,8 +1055,9 @@ static bool cl11_op_cpy(cl11_device * c, const ggml_tensor * dst) {
     const cl11_tref s = cl11_ref(src0), d = cl11_ref(dst);
 
     // transposing copy of a tensor whose dim 1 is contiguous into a contiguous tensor of the same type and shape
-    if (src0->type == dst->type && ggml_are_same_shape(src0, dst) && ggml_is_contiguous(dst) &&
-        src0->nb[1] == ggml_type_size(src0->type) && src0->nb[0] > src0->nb[1] && src0->ne[0] > 1 && src0->ne[1] > 1 &&
+    const sgt::TensorDesc src0_d = cl11_desc(src0);
+    if (src0->type == dst->type && ggml_are_same_shape(src0, dst) && sgt::is_contiguous(cl11_desc(dst)) &&
+        src0_d.nb[1] == sgt::dtype_type_size(src0_d.dtype) && sgt::is_transposed(src0_d) && src0->ne[0] > 1 && src0->ne[1] > 1 &&
         c->cfg.gt >= 8 && !c->no_cpy_t) {
         const int64_t tiles0 = (dst->ne[0] + 31) / 32;
         const int64_t tiles1 = (dst->ne[1] + 31) / 32;
@@ -1365,15 +1309,6 @@ static bool cl11_op_concat(cl11_device * c, const ggml_tensor * dst) {
     return cl11_launch(c->queue, c->exec, a, c->cfg.wg_ew, cl11_div_up(n, c->cfg.wg_ew));
 }
 
-// must match `padp` in src/backends/opencl11/kernels/moe_ops.cl
-struct cl11_padp {
-    int32_t lp[4];
-    int32_t rp[4];
-    int32_t w[4];
-    int32_t circ;
-};
-static_assert(sizeof(cl11_padp) == 13 * sizeof(int32_t), "cl11_padp layout");
-
 static bool cl11_op_pad(cl11_device * c, const ggml_tensor * dst) {
     const ggml_tensor * src0 = dst->src[0];
     cl11_padp pp = {};
@@ -1414,23 +1349,8 @@ static bool cl11_op_argsort(cl11_device * c, const ggml_tensor * dst) {
 
 // ---- MUL_MAT_ID: dst[:, i, t] = src0[:, :, ids[i, t]] * src1[:, i % ne11, t] ----
 
-// A descriptor of the sub-tensor made of `ne2` slices of t starting at slice `first`, or of the 2-D tensor [ne0, ne1] at the byte offset `off`
-static cl11_td cl11_td_matrix(int64_t ne0, int64_t ne1, size_t nb0, size_t nb1, size_t off) {
-    cl11_td t = {};
-    t.ne[0] = (int32_t) ne0;
-    t.ne[1] = (int32_t) ne1;
-    t.ne[2] = 1;
-    t.ne[3] = 1;
-    t.nb[0] = (int32_t) nb0;
-    t.nb[1] = (int32_t) nb1;
-    t.nb[2] = (int32_t) (nb1 * (size_t) ne1);
-    t.nb[3] = t.nb[2];
-    t.off   = (int32_t) off;
-    for (int i = 0; i < 4; ++i) {
-        cl11_fastdiv_init((uint32_t) t.ne[i], t.fm[i], t.fl[i]);
-    }
-    return t;
-}
+// (the descriptors of the per-expert sub-tensors and of the scratch columns are built by
+// cl11_td_matrix of src/backends/opencl11/tensor_abi.h)
 
 // Prompt processing (several tokens): the ids are read back (the queue is finished), the (slot, token) pairs are sorted by expert, the columns of
 // src1 of all the pairs are gathered into one scratch buffer in that order, every expert that is used multiplies its range of columns (the normal
@@ -1705,7 +1625,7 @@ static bool cl11_can_skip_cont(const cl11_device * c, const ggml_cgraph * cgraph
     }
     const ggml_tensor * a = cont->src[0];
     if (a == nullptr || a->type != GGML_TYPE_F16 || cont->type != GGML_TYPE_F16 || !ggml_are_same_shape(a, cont) ||
-        a->nb[1] != ggml_type_size(GGML_TYPE_F16) || a->nb[0] <= a->nb[1] || !cl11_fits_int(a)) {
+        a->nb[1] != ggml_type_size(GGML_TYPE_F16) || !sgt::is_transposed(cl11_desc(a)) || !cl11_fits_int(a)) {
         return false;
     }
     // the consumer

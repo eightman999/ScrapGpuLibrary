@@ -3,8 +3,9 @@
 #
 #   adapters/ggml/llama.cpp/install-in-tree.sh <llama.cpp dir>
 #
-# - copies CMakeLists.txt, ggml-cl11.cpp, OpenCL11 backend sources and kernels/ to <llama.cpp>/ggml/src/ggml-cl11/
-#   and include/ggml-cl11.h to <llama.cpp>/ggml/include/
+# - copies CMakeLists.txt, ggml-cl11.cpp, OpenCL11 backend sources and kernels/, the tensor module
+#   and the scrapgpu public headers to <llama.cpp>/ggml/src/ggml-cl11/, and include/ggml-cl11.h to
+#   <llama.cpp>/ggml/include/
 # - applies in-tree-registration.patch (CMake option GGML_CL11 + backend registry)
 # Idempotent: files are only copied when they differ, an already applied patch is skipped.
 set -euo pipefail
@@ -44,6 +45,12 @@ copy_if_different "$adapter/ggml-cl11.cpp"  "$dest/ggml-cl11.cpp"
 for f in "$repo"/src/backends/opencl11/*.{h,cpp,cmake}; do
     copy_if_different "$f" "$dest/opencl11/$(basename "$f")"
 done
+for f in "$repo"/src/tensor/*.{h,cpp}; do
+    copy_if_different "$f" "$dest/tensor/$(basename "$f")"
+done
+for f in "$repo"/include/scrapgpu/*.h; do
+    copy_if_different "$f" "$dest/scrapgpu/$(basename "$f")"
+done
 for f in "$repo"/src/backends/opencl11/kernels/*.cl; do
     copy_if_different "$f" "$dest/opencl11/kernels/$(basename "$f")"
 done
@@ -60,6 +67,21 @@ fi
 if [ -d "$dest/opencl11/kernels" ]; then
     for f in "$dest"/opencl11/kernels/*.cl; do
         if [ ! -f "$repo/src/backends/opencl11/kernels/$(basename "$f")" ]; then
+            rm "$f"; echo "removed  ${f#"$tree"/}"; changed=1
+        fi
+    done
+fi
+# tensor / public header copies that no longer exist in the repository
+if [ -d "$dest/tensor" ]; then
+    for f in "$dest"/tensor/*; do
+        if [ -e "$f" ] && [ ! -f "$repo/src/tensor/$(basename "$f")" ]; then
+            rm "$f"; echo "removed  ${f#"$tree"/}"; changed=1
+        fi
+    done
+fi
+if [ -d "$dest/scrapgpu" ]; then
+    for f in "$dest"/scrapgpu/*.h; do
+        if [ -e "$f" ] && [ ! -f "$repo/include/scrapgpu/$(basename "$f")" ]; then
             rm "$f"; echo "removed  ${f#"$tree"/}"; changed=1
         fi
     done

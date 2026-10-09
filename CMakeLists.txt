@@ -6,6 +6,20 @@ option(SCRAPGPU_BUILD_OPENCL11 "Build the OpenCL 1.1 backend (Phase 2)" OFF)
 option(SCRAPGPU_BUILD_GGML_ADAPTER "Build the existing ggml CL11 adapter" OFF)
 option(SCRAPGPU_BUILD_TESTS "Build ScrapGpu contract tests" ON)
 
+if (SCRAPGPU_BUILD_CORE OR SCRAPGPU_BUILD_OPENCL11)
+    # the ggml-independent tensor descriptors and their math (no OpenCL, no ggml)
+    add_library(scrapgpu_tensor STATIC
+        src/tensor/tensor.cpp)
+    target_include_directories(scrapgpu_tensor PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/src"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    target_compile_features(scrapgpu_tensor PUBLIC cxx_std_17)
+    set_target_properties(scrapgpu_tensor PROPERTIES
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON
+        POSITION_INDEPENDENT_CODE ON)
+endif()
+
 if (SCRAPGPU_BUILD_CORE)
     add_library(scrapgpu_core
         src/core/op.cpp
@@ -13,6 +27,7 @@ if (SCRAPGPU_BUILD_CORE)
         src/core/status.cpp
         src/core/tensor.cpp)
     target_include_directories(scrapgpu_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    target_link_libraries(scrapgpu_core PRIVATE scrapgpu_tensor)
     target_compile_features(scrapgpu_core PUBLIC cxx_std_17)
     set_target_properties(scrapgpu_core PROPERTIES
         CXX_VISIBILITY_PRESET hidden
@@ -31,7 +46,7 @@ if (SCRAPGPU_BUILD_OPENCL11)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/backends"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/backends/opencl11"
         ${OpenCL_INCLUDE_DIRS})
-    target_link_libraries(scrapgpu_opencl11 PUBLIC ${OpenCL_LIBRARIES})
+    target_link_libraries(scrapgpu_opencl11 PUBLIC ${OpenCL_LIBRARIES} scrapgpu_tensor)
     target_compile_features(scrapgpu_opencl11 PUBLIC cxx_std_17)
     target_compile_definitions(scrapgpu_opencl11 PUBLIC
         CL_TARGET_OPENCL_VERSION=110
@@ -64,6 +79,11 @@ if (SCRAPGPU_BUILD_TESTS AND SCRAPGPU_BUILD_CORE)
     add_executable(scrapgpu_public_headers_cpp tests/core/public_headers_cpp.cpp)
     target_link_libraries(scrapgpu_public_headers_cpp PRIVATE scrapgpu_core)
     add_test(NAME scrapgpu_public_headers_cpp COMMAND scrapgpu_public_headers_cpp)
+
+    add_executable(scrapgpu_tensor_tests tests/tensor/tensor_tests.cpp)
+    target_link_libraries(scrapgpu_tensor_tests PRIVATE scrapgpu_tensor)
+    target_include_directories(scrapgpu_tensor_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/backends")
+    add_test(NAME scrapgpu_tensor_tests COMMAND scrapgpu_tensor_tests)
 
     add_test(NAME scrapgpu_dependency_check
         COMMAND "${CMAKE_COMMAND}" -DROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_core_dependencies.cmake")
