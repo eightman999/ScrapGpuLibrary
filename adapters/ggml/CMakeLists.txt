@@ -36,6 +36,7 @@ if (NOT TARGET scrapgpu_opencl11)
                 "${CL11_OPENCL11_DIR}/buffer.cpp"
                 "${CL11_OPENCL11_DIR}/context.cpp"
                 "${CL11_OPENCL11_DIR}/device.cpp"
+                "${CL11_OPENCL11_DIR}/device_state.cpp"
                 "${CL11_OPENCL11_DIR}/kernels.cpp")
     get_filename_component(CL11_BACKENDS_DIR "${CL11_OPENCL11_DIR}/.." ABSOLUTE)
     target_include_directories(scrapgpu_opencl11 PUBLIC "${CL11_BACKENDS_DIR}" "${CL11_OPENCL11_DIR}")

@@ -1,4 +1,5 @@
 #include "context.h"
+#include "device_state.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -31,41 +32,34 @@ const char * cl11_err_str(cl_int err) {
     }
 }
 
-bool cl11_ensure_runtime_context(const cl11_device_info & info,
-                                 const char * name,
-                                 bool & context_ready,
-                                 bool & failed,
-                                 cl_context & context,
-                                 cl_command_queue & queue,
-                                 bool & profile,
-                                 bool & launch_log) {
-    if (context_ready) {
+bool cl11_ensure_runtime_context(cl11_device * dev) {
+    if (dev->context_ready) {
         return true;
     }
-    if (failed) {
+    if (dev->failed) {
         return false;
     }
 
     cl_int err = CL_SUCCESS;
-    const cl_context_properties props[] = { CL_CONTEXT_PLATFORM, (cl_context_properties) info.platform, 0 };
-    context = clCreateContext(props, 1, &info.device, nullptr, nullptr, &err);
+    const cl_context_properties props[] = { CL_CONTEXT_PLATFORM, (cl_context_properties) dev->info.platform, 0 };
+    dev->context = clCreateContext(props, 1, &dev->info.device, nullptr, nullptr, &err);
     if (err != CL_SUCCESS) {
-        fprintf(stderr, "%s: clCreateContext failed for %s: %s\n", __func__, name, cl11_err_str(err));
-        failed = true;
+        fprintf(stderr, "%s: clCreateContext failed for %s: %s\n", __func__, dev->name.c_str(), cl11_err_str(err));
+        dev->failed = true;
         return false;
     }
 
-    profile = getenv("GGML_CL11_PROFILE") != nullptr;
-    launch_log = getenv("GGML_CL11_LAUNCH_LOG") != nullptr;
-    queue = clCreateCommandQueue(context, info.device, profile ? CL_QUEUE_PROFILING_ENABLE : 0, &err);
+    dev->exec.profile = getenv("GGML_CL11_PROFILE") != nullptr;
+    dev->exec.launch_log = getenv("GGML_CL11_LAUNCH_LOG") != nullptr;
+    dev->queue = clCreateCommandQueue(dev->context, dev->info.device, dev->exec.profile ? CL_QUEUE_PROFILING_ENABLE : 0, &err);
     if (err != CL_SUCCESS) {
-        fprintf(stderr, "%s: clCreateCommandQueue failed for %s: %s\n", __func__, name, cl11_err_str(err));
-        clReleaseContext(context);
-        context = nullptr;
-        failed = true;
+        fprintf(stderr, "%s: clCreateCommandQueue failed for %s: %s\n", __func__, dev->name.c_str(), cl11_err_str(err));
+        clReleaseContext(dev->context);
+        dev->context = nullptr;
+        dev->failed = true;
         return false;
     }
 
-    context_ready = true;
+    dev->context_ready = true;
     return true;
 }

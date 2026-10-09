@@ -3,15 +3,12 @@
 
 #include "device.h"
 
+struct cl11_device;
+
 const char * cl11_err_str(cl_int err);
 
-bool cl11_ensure_runtime_context(const cl11_device_info & info,
-                                 const char * name,
-                                 bool & context_ready,
-                                 bool & failed,
-                                 cl_context & context,
-                                 cl_command_queue & queue,
-                                 bool & profile,
-                                 bool & launch_log);
+// creates the cl_context and the in-order command queue of the device (context, queue, context_ready, failed and the
+// profiling / launch log flags of dev->exec), the caller holds dev->mutex
+bool cl11_ensure_runtime_context(cl11_device * dev);
 
 #endif
