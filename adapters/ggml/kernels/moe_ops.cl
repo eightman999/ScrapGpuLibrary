@@ -120,7 +120,12 @@ kernel void k_sum_rows(global uchar * p0, tdesc t0, global uchar * pd, tdesc td)
 // ---------------------------------------------------------------------------------------------
 #define SORT_BEFORE(ka, ia, kb, ib, desc) ((desc) ? ((ka) > (kb) || ((ka) == (kb) && (ia) < (ib))) : ((ka) < (kb) || ((ka) == (kb) && (ia) < (ib))))
 
-kernel void k_argsort(global uchar * p0, tdesc t0, global uchar * pd, tdesc td, local float * keys, local int * idxs, int npad, int desc) {
+// The keys and indices are static local arrays of SORT_NMAX entries (set by the host from the local memory of the device, see
+// cl11_sort_nmax), not local-memory kernel arguments: Mesa Clover passes the kernel arguments at wrong offsets when a local-memory
+// argument follows by-value struct arguments (tdesc), the kernel then reads garbage pointers (WX 2100, Mesa 25.0.7).
+kernel void k_argsort(global uchar * p0, tdesc t0, global uchar * pd, tdesc td, int npad, int desc) {
+    local float keys[SORT_NMAX];
+    local int   idxs[SORT_NMAX];
     const int lid = (int)get_local_id(0);
     const int lsz = (int)get_local_size(0);
     const int row = LGID();
