@@ -1,6 +1,6 @@
 # CL11 移行計画
 
-対象: `adapters/ggml/ggml-cl11.cpp` 4033 行、`adapters/ggml/kernels/*.cl`、`adapters/ggml/CMakeLists.txt`。根拠は現行ファイルの行番号。提案は「提案」と明記する。
+対象: `adapters/ggml/ggml-cl11.cpp` 4033 行、旧 `adapters/ggml/kernels/*.cl`（現在は `src/backends/opencl11/kernels/*.cl`）、`adapters/ggml/CMakeLists.txt`。根拠は現行ファイルの行番号。提案は「提案」と明記する。
 
 ## 1. `ggml-cl11.cpp` インベントリ
 
@@ -292,6 +292,9 @@
 Step 1 done (2026-10-09): moved `cl11_device_info`, device string/scalar helpers, `GGML_CL11_DEVICES` filtering, AMD generation detection, `cl11_tuning_for`, `cl11_config`, `cl11_mmx` parsing/validation and the device probe helper to `src/backends/opencl11/device.{h,cpp}`. `ggml-cl11.cpp` now keeps a registry compatibility shim that materializes the existing ggml `cl11_device_context` objects from backend-probed device info; context/program/buffer/executor state remains in ggml for later steps.
 
 Step 2 done (2026-10-09): moved OpenCL error strings and lazy `cl_context` / in-order `cl_command_queue` creation, including `GGML_CL11_PROFILE` and `GGML_CL11_LAUNCH_LOG` flag capture, to `src/backends/opencl11/context.{h,cpp}`. `ggml-cl11.cpp` keeps a thin `cl11_ensure_context` compatibility shim because later Phase 2 steps still store context, queue, profiling, program, buffer and executor state on the ggml device wrapper.
+
+Step 3 done (2026-10-09): moved the kernel id/class/table helpers and OpenCL program build/source embedding to `src/backends/opencl11/kernels.{h,cpp}`, and moved the `.cl` files unchanged to `src/backends/opencl11/kernels/`. `ggml-cl11.cpp` keeps program orchestration compatibility shims for work-group reduction, split-program selection, K-quant program creation and kernel handle storage until executor/buffer state moves.
+`GGML_CL11_PRINT_BUILD_OPTS=1` prints the exact OpenCL build options string before `clBuildProgram` for byte-for-byte comparison.
 
 ## 6. リスクと未決
 

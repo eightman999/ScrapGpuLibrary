@@ -26,9 +26,9 @@
 #include "ggml-impl.h"
 #include "ggml-backend-impl.h"
 
-#include "ggml-cl11-kernels.h" // generated: ggml_cl11_sources[] (the .cl files)
 #include "opencl11/context.h"
 #include "opencl11/device.h"
+#include "opencl11/kernels.h"
 
 #include <algorithm>
 #include <cctype>
@@ -44,8 +44,6 @@
 #include <string>
 #include <vector>
 
-#define CL11_NUM_SOURCES (sizeof(ggml_cl11_sources) / sizeof(ggml_cl11_sources[0]))
-
 // ggml-alloc asks for the base address of a buffer: the tensors of a CL11 buffer are addressed as
 // offsets from this dummy (non-null, page aligned) pointer.
 #define CL11_BASE ((void *) 0x1000)
@@ -56,207 +54,10 @@
 // the tensors have to be aligned for the vector loads of the kernels (and for CL11_BASE)
 #define CL11_MIN_ALIGNMENT 256
 
-// Device information and tuning live in src/backends/opencl11/device.{h,cpp};
-// ggml keeps the device-context wrapper until later Phase 2 steps move context/buffer/executor state.
+// Device information, context creation and kernel/program helpers live in src/backends/opencl11/.
+// ggml keeps the device-context wrapper until later Phase 2 steps move buffer/executor state.
 
-enum cl11_kernel_class {
-    CL11_CLASS_EW,
-    CL11_CLASS_ROW,
-    CL11_CLASS_MV,
-    CL11_CLASS_MM,
-    CL11_CLASS_MVR,
-    CL11_CLASS_ATT,
-    CL11_CLASS_MVM,   // the multi mat-vec kernels (k_mvm_*): a kernel that does not accept the work-group size of its type only disables the fusion
-    CL11_CLASS_MMX,   // the parameterized mat-mat kernels: their work-group size is fixed by the variant (cl11_mmx), a kernel that does not accept it drops the variant
-    CL11_CLASS_COUNT,
-};
-
-// the 6 types of src0 of GET_ROWS / MUL_MAT
-enum cl11_qtype {
-    CL11_QT_F32,
-    CL11_QT_F16,
-    CL11_QT_Q4_0,
-    CL11_QT_Q8_0,
-    CL11_QT_Q4_K,
-    CL11_QT_Q6_K,
-    CL11_QT_COUNT,
-};
-
-enum cl11_kernel_id {
-    K_ADD, K_SUB, K_MUL, K_DIV,
-    K_UNARY,
-    K_GLU,
-    K_CPY_F32_F32, K_CPY_F32_F16, K_CPY_F16_F32, K_CPY_F16_F16,
-    K_CPY_T_F32, K_CPY_T_F16,
-    K_FILL_U32, K_FILL_U8,
-    K_RMS_NORM,
-    K_RMS_NORM_MUL,
-    K_ADD_RMS_NORM_MUL,
-    K_SOFT_MAX,
-    K_ROPE_F32, K_ROPE_F16,
-    K_GET_ROWS,                                   // + cl11_qtype
-    K_SET_ROWS = K_GET_ROWS + CL11_QT_COUNT,      // + 2*src_f16 + dst_f16
-    K_MV       = K_SET_ROWS + 4,                  // + cl11_qtype
-    K_MM       = K_MV + CL11_QT_COUNT,            // + cl11_qtype
-    K_MVX      = K_MM + CL11_QT_COUNT,            // + cl11_qtype: mat-vec, src1 in local memory
-    K_MVW      = K_MVX + CL11_QT_COUNT,           // + cl11_qtype: mat-vec, src1 through the caches
-    K_MVT_F16  = K_MVW + CL11_QT_COUNT,           // mat-vec with a transposed F16 src0
-    K_MVQ_F16,                                    // mat-vec of the K cache (F16, one lane per row)
-    K_MVT_G_F16,                                  // mat-vec with a transposed F16 src0, many work-groups (cfg.mvt_groups)
-    K_MVR,                                        // + cl11_rkind: mat-vec with the repacked weights
-    K_MVRC     = K_MVR + CL11_RK_COUNT,           // + cl11_rkind: ... with src1 (one column) in constant memory
-    K_MMX      = K_MVRC + CL11_RK_COUNT,          // + cl11_qtype: parameterized mat-mat kernels (cl11_mmx, mul_mm_x.cl), built only when selected
-    K_MVM      = K_MMX + CL11_QT_COUNT,           // + cl11_rkind: up to 3 mat-vec of the same src1 in one launch (mul_mv_multi.cl)
-    K_SET_ROWS2 = K_MVM + CL11_RK_COUNT,          // + 2*src_f16 + dst_f16: two SET_ROWS (K and V cache) in one launch
-    K_XPREP    = K_SET_ROWS2 + 4,                 // src1 (one column) prepared for the "denormal products" kernels (cfg.mvr_dn, Fermi)
-    K_ADD_ID,                                     // the operations of the hybrid / MoE graphs (moe_ops.cl)
-    K_SSM_CONV,
-    K_CONCAT4, K_CONCAT2,
-    K_PAD,
-    K_SUM_ROWS,
-    K_ARGSORT,
-    K_MID_GATHER, K_MID_SCATTER,                  // MUL_MAT_ID, prompt processing
-    K_MVI,                                        // + cl11_qtype: MUL_MAT_ID, generation: mat-vec of F32 / F16 experts (the expert is read from the ids)
-    K_MVRI     = K_MVI + CL11_QT_COUNT,           // + cl11_rkind: ... of the repacked Q4_0 / Q8_0 / Q4_K / Q6_K experts
-    K_COUNT    = K_MVRI + CL11_RK_COUNT,
-};
-
-static bool cl11_is_k_kernel(int id) {
-    return id == K_MVR + CL11_RK_Q4_K || id == K_MVR + CL11_RK_Q6_K || id == K_MVRC + CL11_RK_Q4_K || id == K_MVRC + CL11_RK_Q6_K ||
-           id == K_MVM + CL11_RK_Q4_K || id == K_MVM + CL11_RK_Q6_K || id == K_MVRI + CL11_RK_Q4_K || id == K_MVRI + CL11_RK_Q6_K;
-}
-
-static bool cl11_is_mmx_kernel(int id) {
-    return id >= K_MMX && id < K_MMX + CL11_QT_COUNT;
-}
-
-static bool cl11_is_mm_kernel(int id) {
-    return (id >= K_MM && id < K_MM + CL11_QT_COUNT) || cl11_is_mmx_kernel(id);
-}
-
-struct cl11_kernel_desc {
-    const char * name;
-    cl11_kernel_class cls;
-};
-
-// must be in the order of enum cl11_kernel_id
-static const cl11_kernel_desc cl11_kernel_table[] = {
-    { "k_add",              CL11_CLASS_EW  },
-    { "k_sub",              CL11_CLASS_EW  },
-    { "k_mul",              CL11_CLASS_EW  },
-    { "k_div",              CL11_CLASS_EW  },
-    { "k_unary",            CL11_CLASS_EW  },
-    { "k_glu",              CL11_CLASS_EW  },
-    { "k_cpy_f32_f32",      CL11_CLASS_EW  },
-    { "k_cpy_f32_f16",      CL11_CLASS_EW  },
-    { "k_cpy_f16_f32",      CL11_CLASS_EW  },
-    { "k_cpy_f16_f16",      CL11_CLASS_EW  },
-    { "k_cpy_t_f32_f32",    CL11_CLASS_MM  },
-    { "k_cpy_t_f16_f16",    CL11_CLASS_MM  },
-    { "k_fill_u32",         CL11_CLASS_EW  },
-    { "k_fill_u8",          CL11_CLASS_EW  },
-    { "k_rms_norm",         CL11_CLASS_ROW },
-    { "k_rms_norm_mul",     CL11_CLASS_ROW },
-    { "k_add_rms_norm_mul", CL11_CLASS_ROW },
-    { "k_soft_max",         CL11_CLASS_ROW },
-    { "k_rope_f32",         CL11_CLASS_ROW },
-    { "k_rope_f16",         CL11_CLASS_ROW },
-    // K_GET_ROWS + cl11_qtype
-    { "k_get_rows_f32",     CL11_CLASS_ROW },
-    { "k_get_rows_f16",     CL11_CLASS_ROW },
-    { "k_get_rows_q4_0",    CL11_CLASS_ROW },
-    { "k_get_rows_q8_0",    CL11_CLASS_ROW },
-    { "k_get_rows_q4_k",    CL11_CLASS_ROW },
-    { "k_get_rows_q6_k",    CL11_CLASS_ROW },
-    // K_SET_ROWS + 2*(src is F16) + (dst is F16)
-    { "k_set_rows_f32_f32", CL11_CLASS_EW  },
-    { "k_set_rows_f32_f16", CL11_CLASS_EW  },
-    { "k_set_rows_f16_f32", CL11_CLASS_EW  },
-    { "k_set_rows_f16_f16", CL11_CLASS_EW  },
-    // K_MV + cl11_qtype
-    { "k_mv_f32",           CL11_CLASS_MV  },
-    { "k_mv_f16",           CL11_CLASS_MV  },
-    { nullptr,             CL11_CLASS_MV  }, // repacked type: k_mvr_*
-    { nullptr,             CL11_CLASS_MV  }, // repacked type: k_mvr_*
-    { nullptr,             CL11_CLASS_MV  }, // repacked type: k_mvr_*
-    { nullptr,             CL11_CLASS_MV  }, // repacked type: k_mvr_*
-    // K_MM + cl11_qtype
-    { "k_mm_f32",           CL11_CLASS_MM  },
-    { "k_mm_f16",           CL11_CLASS_MM  },
-    { "k_mm_q4_0",          CL11_CLASS_MM  },
-    { "k_mm_q8_0",          CL11_CLASS_MM  },
-    { "k_mm_q4_k",          CL11_CLASS_MM  },
-    { "k_mm_q6_k",          CL11_CLASS_MM  },
-    // K_MVX + cl11_qtype
-    { "k_mvx_f32",          CL11_CLASS_MV  },
-    { "k_mvx_f16",          CL11_CLASS_MV  },
-    { nullptr,             CL11_CLASS_MV  }, // repacked type: k_mvr_*
-    { nullptr,             CL11_CLASS_MV  }, // repacked type: k_mvr_*
-    { nullptr,             CL11_CLASS_MV  }, // repacked type: k_mvr_*
-    { nullptr,             CL11_CLASS_MV  }, // repacked type: k_mvr_*
-    // K_MVW + cl11_qtype
-    { "k_mvw_f32",          CL11_CLASS_MV  },
-    { "k_mvw_f16",          CL11_CLASS_MV  },
-    { nullptr,             CL11_CLASS_MV  }, // repacked type: k_mvr_*
-    { nullptr,             CL11_CLASS_MV  }, // repacked type: k_mvr_*
-    { nullptr,             CL11_CLASS_MV  }, // repacked type: k_mvr_*
-    { nullptr,             CL11_CLASS_MV  }, // repacked type: k_mvr_*
-    { "k_mvt_f16",          CL11_CLASS_ATT },
-    { "k_mvq_f16",          CL11_CLASS_ROW },
-    { "k_mvt_g_f16",        CL11_CLASS_ROW },
-    // K_MVR + cl11_rkind
-    { "k_mvr_q4_0",         CL11_CLASS_MVR },
-    { "k_mvr_q8_0",         CL11_CLASS_MVR },
-    { "k_mvr_q4_k",         CL11_CLASS_MVR },
-    { "k_mvr_q6_k",         CL11_CLASS_MVR },
-    // K_MVRC + cl11_rkind
-    { "k_mvrc_q4_0",        CL11_CLASS_MVR },
-    { "k_mvrc_q8_0",        CL11_CLASS_MVR },
-    { "k_mvrc_q4_k",        CL11_CLASS_MVR },
-    { "k_mvrc_q6_k",        CL11_CLASS_MVR },
-    // K_MMX + cl11_qtype
-    { "k_mmx_f32",          CL11_CLASS_MMX },
-    { "k_mmx_f16",          CL11_CLASS_MMX },
-    { "k_mmx_q4_0",         CL11_CLASS_MMX },
-    { "k_mmx_q8_0",         CL11_CLASS_MMX },
-    { "k_mmx_q4_k",         CL11_CLASS_MMX },
-    { "k_mmx_q6_k",         CL11_CLASS_MMX },
-    // K_MVM + cl11_rkind
-    { "k_mvm_q4_0",         CL11_CLASS_MVM },
-    { "k_mvm_q8_0",         CL11_CLASS_MVM },
-    { "k_mvm_q4_k",         CL11_CLASS_MVM },
-    { "k_mvm_q6_k",         CL11_CLASS_MVM },
-    // K_SET_ROWS2 + 2*(src is F16) + (dst is F16)
-    { "k_set_rows2_f32_f32", CL11_CLASS_EW },
-    { "k_set_rows2_f32_f16", CL11_CLASS_EW },
-    { "k_set_rows2_f16_f32", CL11_CLASS_EW },
-    { "k_set_rows2_f16_f16", CL11_CLASS_EW },
-    { "k_xprep",            CL11_CLASS_EW  },
-    { "k_add_id",           CL11_CLASS_EW  },
-    { "k_ssm_conv",         CL11_CLASS_EW  },
-    { "k_concat_4",         CL11_CLASS_EW  },
-    { "k_concat_2",         CL11_CLASS_EW  },
-    { "k_pad",              CL11_CLASS_EW  },
-    { "k_sum_rows",         CL11_CLASS_ROW },
-    { "k_argsort",          CL11_CLASS_ROW },
-    { "k_mid_gather",       CL11_CLASS_ROW },
-    { "k_mid_scatter",      CL11_CLASS_ROW },
-    // K_MVI + cl11_qtype
-    { "k_mvi_f32",          CL11_CLASS_MV  },
-    { "k_mvi_f16",          CL11_CLASS_MV  },
-    { nullptr,             CL11_CLASS_MV  }, // repacked type: k_mvri_*
-    { nullptr,             CL11_CLASS_MV  }, // repacked type: k_mvri_*
-    { nullptr,             CL11_CLASS_MV  }, // repacked type: k_mvri_*
-    { nullptr,             CL11_CLASS_MV  }, // repacked type: k_mvri_*
-    // K_MVRI + cl11_rkind
-    { "k_mvri_q4_0",        CL11_CLASS_MVR },
-    { "k_mvri_q8_0",        CL11_CLASS_MVR },
-    { "k_mvki_q4_k",        CL11_CLASS_MVR },
-    { "k_mvki_q6_k",        CL11_CLASS_MVR },
-};
-static_assert(sizeof(cl11_kernel_table) / sizeof(cl11_kernel_table[0]) == K_COUNT, "cl11_kernel_table does not match cl11_kernel_id");
-
-// tensor descriptor passed to the kernels by value, must match `tdesc` in kernels/common.cl
+// tensor descriptor passed to the kernels by value, must match `tdesc` in src/backends/opencl11/kernels/common.cl
 struct cl11_td {
     int32_t  ne[4];
     int32_t  nb[4];
@@ -279,7 +80,7 @@ static void cl11_fastdiv_init(uint32_t d, uint32_t & m, uint32_t & l) {
     m = (uint32_t) ((((uint64_t) 1 << 32) * (((uint64_t) 1 << l) - d)) / d + 1);
 }
 
-// must match `bcast` in kernels/common.cl
+// must match `bcast` in src/backends/opencl11/kernels/common.cl
 struct cl11_bcast {
     int32_t  r2, r3;
     uint32_t m2, l2, m3, l3;
@@ -489,126 +290,6 @@ static bool cl11_dn_probe(cl11_device_context * c) {
     }
     clReleaseProgram(prog);
     return ok;
-}
-
-// mode 0: all the kernels in one program, 1: everything but the Q4_K / Q6_K mat-vec kernels, 2: only these (on NVIDIA they are built with
-// `-cl-nv-maxrregcount`, see cl11_ensure_kprogram), 3: neither the K-quant nor the mat-mat kernels, 4: only the mat-mat kernels
-// ARGSORT / TOP_K: the largest padded row (a power of 2) whose keys and indices (2 x 4 bytes per element) fit the local memory with 512
-// bytes to spare; the kernel declares static local arrays of this size (SORT_NMAX)
-static int64_t cl11_sort_nmax(size_t local_mem) {
-    int64_t n = 1;
-    while (n < (1 << 20) && (size_t) (n * 2) * 8 + 512 <= local_mem) {
-        n <<= 1;
-    }
-    return n;
-}
-
-// (3 and 4: cfg.split_programs, see cl11_ensure_program)
-static bool cl11_build_program(cl11_device_context * c, const cl11_config & cfg, std::string & log, int mode, cl_program & prog) {
-    char opts[2048];
-    snprintf(opts, sizeof(opts), "-cl-std=CL1.1 -DWG_EW=%d -DWG_ROW=%d -DWG_MV=%d -DGT=%d -DNRW=%d -DMMBN=%d"
-            " -DWG_MVR_Q4_0=%d -DNRR_Q4_0=%d -DWG_MVR_Q8_0=%d -DNRR_Q8_0=%d -DWG_MVR_Q4_K=%d -DNRR_Q4_K=%d -DWG_MVR_Q6_K=%d -DNRR_Q6_K=%d"
-            " -DLDG_Q4_0=%d -DLDG_Q8_0=%d -DLDG_Q4_K=%d -DLDG_Q6_K=%d -DDN_Q4_0=%d -DDN_Q8_0=%d -DDN_Q4_K=%d -DDN_Q6_K=%d -DATT_PL=%d -DWG_ATT=%d -DSORT_NMAX=%d%s%s %s",
-            cfg.wg_ew, cfg.wg_row, cfg.wg_mv, cfg.gt, cfg.mvs_nrw, cfg.mm_bn,
-            cfg.wg_mvr[CL11_RK_Q4_0], cfg.mvr_nrr[CL11_RK_Q4_0], cfg.wg_mvr[CL11_RK_Q8_0], cfg.mvr_nrr[CL11_RK_Q8_0],
-            cfg.wg_mvr[CL11_RK_Q4_K], cfg.mvr_nrr[CL11_RK_Q4_K], cfg.wg_mvr[CL11_RK_Q6_K], cfg.mvr_nrr[CL11_RK_Q6_K],
-            c->use_nv_ldg && cfg.mvr_ldg[CL11_RK_Q4_0], c->use_nv_ldg && cfg.mvr_ldg[CL11_RK_Q8_0],
-            c->use_nv_ldg && cfg.mvr_ldg[CL11_RK_Q4_K], c->use_nv_ldg && cfg.mvr_ldg[CL11_RK_Q6_K],
-            cfg.mvr_dn[CL11_RK_Q4_0], cfg.mvr_dn[CL11_RK_Q8_0], cfg.mvr_dn[CL11_RK_Q4_K], cfg.mvr_dn[CL11_RK_Q6_K], cfg.att_p, cfg.wg_att,
-            (int) cl11_sort_nmax(c->info.local_mem),
-            c->use_nv_asm ? " -DCL11_NV_ASM" : "", cfg.use_mad ? " -DCL11_MAD" : "", getenv("GGML_CL11_BUILD_OPTS") ? getenv("GGML_CL11_BUILD_OPTS") : "");
-    if (c->use_nv_ldg) {
-        strncat(opts, " -DCL11_NV_LDG", sizeof(opts) - strlen(opts) - 1);
-    }
-    if (!c->multi_mv) {
-        strncat(opts, " -DCL11_NO_MVM", sizeof(opts) - strlen(opts) - 1);
-    }
-    if (cfg.mmx.on) {
-        char mx[256];
-        snprintf(mx, sizeof(mx), " -DCL11_MMX -DMX_BM=%d -DMX_BN=%d -DMX_RM=%d -DMX_CN=%d -DMX_BK=%d -DMX_KU=%d -DMX_PF=%d -DMX_LDG=%d -DMX_REQD=%d",
-                cfg.mmx.bm, cfg.mmx.bn, cfg.mmx.rm, cfg.mmx.cn, cfg.mmx.bk, cfg.mmx.ku, cfg.mmx.pf, c->use_nv_ldg && cfg.mmx.ldg ? 1 : 0, cfg.mmx.reqd);
-        strncat(opts, mx, sizeof(opts) - strlen(opts) - 1);
-    }
-    if (mode == 1) {
-        strncat(opts, " -DCL11_NO_K", sizeof(opts) - strlen(opts) - 1);
-    } else if (mode == 2) {
-        char rr[96];
-        if (cfg.nv_maxrreg > 0 && c->use_nv_asm) { // an NVIDIA option: other compilers (FORCE_GEN=kepler on a Mac) must not get it
-            snprintf(rr, sizeof(rr), " -DCL11_PROG_K -cl-nv-maxrregcount=%d", cfg.nv_maxrreg);
-        } else {
-            snprintf(rr, sizeof(rr), " -DCL11_PROG_K");
-        }
-        strncat(opts, rr, sizeof(opts) - strlen(opts) - 1);
-    } else if (mode == 3) {
-        strncat(opts, " -DCL11_NO_K -DCL11_NO_MM", sizeof(opts) - strlen(opts) - 1);
-    } else if (mode == 4) {
-        strncat(opts, " -DCL11_ONLY_MM", sizeof(opts) - strlen(opts) - 1);
-        if (cfg.mmx.on && cfg.mmx.maxrreg > 0 && c->use_nv_asm) {
-            char rr[64];
-            snprintf(rr, sizeof(rr), " -cl-nv-maxrregcount=%d", cfg.mmx.maxrreg);
-            strncat(opts, rr, sizeof(opts) - strlen(opts) - 1);
-        }
-    }
-
-    // GGML_CL11_KERNEL_DIR: read the .cl files from this directory instead of the embedded copies (development)
-    std::vector<std::string> file_sources;
-    std::vector<const char *> sources(ggml_cl11_sources, ggml_cl11_sources + CL11_NUM_SOURCES);
-    if (const char * dir = getenv("GGML_CL11_KERNEL_DIR")) {
-        file_sources.resize(CL11_NUM_SOURCES);
-        for (size_t i = 0; i < CL11_NUM_SOURCES; ++i) {
-            const std::string path = std::string(dir) + "/" + ggml_cl11_source_names[i];
-            std::ifstream f(path, std::ios::binary);
-            if (!f) {
-                GGML_LOG_ERROR("%s: cannot read %s\n", __func__, path.c_str());
-                return false;
-            }
-            std::stringstream ss;
-            ss << f.rdbuf();
-            file_sources[i] = ss.str();
-            sources[i] = file_sources[i].c_str();
-        }
-        GGML_LOG_INFO("%s: using the kernel sources of %s\n", __func__, dir);
-    }
-
-    cl_int err = CL_SUCCESS;
-    prog = clCreateProgramWithSource(c->context, (cl_uint) CL11_NUM_SOURCES, sources.data(), nullptr, &err);
-    if (err != CL_SUCCESS) {
-        GGML_LOG_ERROR("%s: clCreateProgramWithSource failed: %s\n", __func__, cl11_err_str(err));
-        return false;
-    }
-
-    err = clBuildProgram(prog, 1, &c->info.device, opts, nullptr, nullptr);
-
-    size_t log_size = 0;
-    clGetProgramBuildInfo(prog, c->info.device, CL_PROGRAM_BUILD_LOG, 0, nullptr, &log_size);
-    log.assign(log_size, '\0');
-    if (log_size > 0) {
-        clGetProgramBuildInfo(prog, c->info.device, CL_PROGRAM_BUILD_LOG, log_size, &log[0], nullptr);
-    }
-
-    if (err != CL_SUCCESS) {
-        GGML_LOG_ERROR("%s: failed to build the kernels for %s (%s) with options '%s': %s\n%s\n", __func__,
-                c->name.c_str(), c->info.name.c_str(), opts, cl11_err_str(err), log.c_str());
-        clReleaseProgram(prog);
-        prog = nullptr;
-        return false;
-    }
-    if (const char * path = getenv("GGML_CL11_DUMP_BINARY")) {
-        // development: write the program binary (PTX for NVIDIA) to this file
-        size_t bin_size = 0;
-        if (clGetProgramInfo(prog, CL_PROGRAM_BINARY_SIZES, sizeof(bin_size), &bin_size, nullptr) == CL_SUCCESS && bin_size > 0) {
-            std::vector<unsigned char> bin(bin_size);
-            unsigned char * ptr = bin.data();
-            if (clGetProgramInfo(prog, CL_PROGRAM_BINARIES, sizeof(ptr), &ptr, nullptr) == CL_SUCCESS) {
-                std::ofstream f(path, std::ios::binary);
-                f.write((const char *) bin.data(), (std::streamsize) bin_size);
-            }
-        }
-    }
-    if (cl11_debug() && log.size() > 1) {
-        GGML_LOG_INFO("%s: build log for %s:\n%s\n", __func__, c->name.c_str(), log.c_str());
-    }
-    return true;
 }
 
 static void cl11_release_kernels(cl11_device_context * c) {
@@ -849,11 +530,13 @@ static bool cl11_ensure_program(cl11_device_context * c) {
 
     for (int attempt = 0; attempt < 8; ++attempt) {
         std::string log;
-        if (!cl11_build_program(c, cfg, log, c->split_programs ? 3 : c->k_separate ? 1 : 0, c->program)) {
+        if (!cl11_build_program(c->context, c->info.device, c->name.c_str(), c->info.name.c_str(), c->info.local_mem,
+                    c->use_nv_asm, c->use_nv_ldg, c->multi_mv, cfg, log, c->split_programs ? 3 : c->k_separate ? 1 : 0, c->program)) {
             c->failed = true;
             return false;
         }
-        if (c->split_programs && !cl11_build_program(c, cfg, log, 4, c->program_mm)) {
+        if (c->split_programs && !cl11_build_program(c->context, c->info.device, c->name.c_str(), c->info.name.c_str(), c->info.local_mem,
+                    c->use_nv_asm, c->use_nv_ldg, c->multi_mv, cfg, log, 4, c->program_mm)) {
             cl11_release_kernels(c);
             c->failed = true;
             return false;
@@ -969,7 +652,8 @@ static bool cl11_ensure_kprogram(cl11_device_context * c) {
     cl11_config cfg = c->cfg;
     for (int attempt = 0; attempt < 4; ++attempt) {
         std::string log;
-        if (!cl11_build_program(c, cfg, log, 2, c->program_k)) {
+        if (!cl11_build_program(c->context, c->info.device, c->name.c_str(), c->info.name.c_str(), c->info.local_mem,
+                    c->use_nv_asm, c->use_nv_ldg, c->multi_mv, cfg, log, 2, c->program_k)) {
             return false;
         }
         int limit = INT_MAX;
@@ -1180,7 +864,7 @@ static cl11_tref cl11_ref(const ggml_tensor * t) {
 //   Q8_0: quants (32 bytes = 2 units, xor 0x80), d              Q4_0: nibbles (16 bytes = 1 unit), d
 //   Q4_K: quants (the 128 bytes of nibbles, 8 units), header (d, dmin, 12 bytes of scales: 1 unit)
 //   Q6_K: ql + qh (192 bytes, 12 units), scales (16 bytes, xor 0x80, 1 unit), d
-// (see kernels/mul_mv_r.cl, kernels/mul_mv_k.cl, dqr_* in kernels/common.cl)
+// (see src/backends/opencl11/kernels/mul_mv_r.cl, src/backends/opencl11/kernels/mul_mv_k.cl, dqr_* in common.cl)
 //
 
 static bool cl11_rp_type(ggml_type type) {
@@ -2496,7 +2180,7 @@ static bool cl11_op_concat(cl11_device_context * c, const ggml_tensor * dst) {
     return cl11_launch(c, a, c->cfg.wg_ew, cl11_div_up(n, c->cfg.wg_ew));
 }
 
-// must match `padp` in kernels/moe_ops.cl
+// must match `padp` in src/backends/opencl11/kernels/moe_ops.cl
 struct cl11_padp {
     int32_t lp[4];
     int32_t rp[4];

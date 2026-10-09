@@ -1,11 +1,11 @@
 # adapters/ggml
 
-OpenCL 1.1 だけで動く ggml バックエンド「CL11」です（llama.cpp / ggml 用）。いまは実装が 1 つのまとまり（`ggml-cl11.cpp`、`kernels/*.cl`）になっていて、将来は runtime / tensor / ops / quant / `backends/opencl11` に分け、ここには ggml との接続部分だけを残す予定です（[docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md)）。
+OpenCL 1.1 だけで動く ggml バックエンド「CL11」です（llama.cpp / ggml 用）。runtime / tensor / ops / quant / `backends/opencl11` への段階的な切り出し中で、ここには ggml との接続部分だけを残していきます（[docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md)）。
 
 | パス | 内容 |
 | --- | --- |
 | `ggml-cl11.cpp` | バックエンド本体（`GGML_BACKEND_DL_IMPL(ggml_backend_cl11_reg)` を含む） |
-| `kernels/*.cl` | OpenCL C 1.1 のカーネル（CMake が文字列として埋め込む） |
+| `../../src/backends/opencl11/kernels/*.cl` | OpenCL C 1.1 のカーネル（CMake が文字列として埋め込む） |
 | `include/ggml-cl11.h` | 公開ヘッダ |
 | `tools/attn_check.cpp` | attention（K / V キャッシュ）のグラフ単位の確認プログラム。`test-backend-ops` は融合したグラフを作らないため別に持つ（先頭のコメントにビルド方法） |
 | `tools/mvm_check.cpp` | 起動回数を減らす融合（複数の `MUL_MAT` を 1 回で、K / V キャッシュの `SET_ROWS` の組）のグラフ単位の確認プログラム（二重精度の参照との比較、先頭のコメントにビルド方法） |

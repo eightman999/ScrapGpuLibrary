@@ -30,7 +30,7 @@
 | ops: CPU 参照 | **移植する** | ggml-quants.c / ggml-common.h の Q4_0・Q8_0・k-quant の参照実装（MIT） |
 | ops: F32 / F16 GEMM | **取り込む**（比較対象にもなる） | CLBlast `Xgemm` / `Xgemv`（Apache-2.0、OpenCL 1.1 対応）。自前の mat-mm（8×4）との比較ベースラインにもなる |
 | quant: GPU 別パッキング | **参考にする** | ggml-opencl の SOA 再配置（`cvt.cl`、`*_flat.cl`）。カーネルは使わない |
-| backends/opencl11 | **CL11 を出発点にする** + **参考にする**（旧 ggml-opencl、MNN） | カーネルは CL11（`adapters/ggml/kernels/`）から切り出す。旧 CLBlast 版 ggml-opencl は GT 430 で CPU より遅かった実装なので、正しさの比較用の素朴な参照としてだけ使う。MNN の `*_buf.cl`（int4 / int8 gemv・gemm）は fp16 を `#ifdef` で外せるので移植候補。現行の ggml-opencl は OpenCL 2.0 必須で**使わない** |
+| backends/opencl11 | **CL11 を出発点にする** + **参考にする**（旧 ggml-opencl、MNN） | カーネルは CL11（`src/backends/opencl11/kernels/`）から切り出す。旧 CLBlast 版 ggml-opencl は GT 430 で CPU より遅かった実装なので、正しさの比較用の素朴な参照としてだけ使う。MNN の `*_buf.cl`（int4 / int8 gemv・gemm）は fp16 を `#ifdef` で外せるので移植候補。現行の ggml-opencl は OpenCL 2.0 必須で**使わない** |
 | backends/opencl12 | **取り込む / 参考にする** | opencl11 のカーネルを共有。CLBlast チューナで Kepler の調整値を作る。dlprimitives の `program_cache` を参考にする |
 | backends/vulkan | **移植する**（シェーダ）+ **取り込む**（volk / vk-bootstrap / VMA） | ggml-vulkan の `*.comp`（mul_mat_vec、dequant）。ホスト側は自作。Vulkan 1.2 と 16bit storage が前提 |
 | backends/cuda | **参考にする** | ggml-cuda はコードを取り込まず、cc 別の選択表と dp4a fallback だけ見る。Fermi は不可。Kepler は CUDA 11.x + ドライバ 470 の実験扱い |

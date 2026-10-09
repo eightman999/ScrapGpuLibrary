@@ -130,7 +130,7 @@ runtime / ops とバックエンドの間の約束を、次の概念だけで定
 | バッファ（ダミーのベースポインタ + オフセット）、公称上限を超える確保、`cl11_fill` | runtime/buffer、runtime/allocator |
 | `cl11_td`（テンソル記述子）、`cl11_fastdiv_init`、`cl11_bcast` | tensor/view・stride |
 | `cl11_rp_*`（R32 の pack / unpack / 転送） | quant/device-specific packing |
-| `cl11_op_*`、`kernels/*.cl` | ops（意味と CPU 参照実装）+ backends/opencl11（カーネル） |
+| `cl11_op_*`、`src/backends/opencl11/kernels/*.cl` | ops（意味と CPU 参照実装）+ backends/opencl11（カーネル） |
 | `cl11_supports_op_impl`、`graph_compute`、`ggml_backend_*` の各関数、`cl11_can_skip_cont` | adapters/ggml |
 
 ### 段階
