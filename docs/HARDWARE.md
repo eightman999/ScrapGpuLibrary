@@ -66,7 +66,7 @@ J/token は hwmon の `power1_average`（GPU 単体）による。RX 6400 のア
 
 ## CL11 が AMD の世代を判定する方法
 
-調整値は GCN と RDNA で分けています（`cl11_amd_generation()`、`adapters/ggml/ggml-cl11.cpp`）。Mesa は `cl_amd_device_attribute_query` を実装していないため、次の順に調べます。
+調整値は GCN と RDNA で分けています（`cl11_amd_generation()`、`src/backends/opencl11/device.cpp`）。Mesa は `cl_amd_device_attribute_query` を実装していないため、次の順に調べます。
 
 1. `cl_amd_device_attribute_query` があれば `CL_DEVICE_GFXIP_MAJOR_AMD`（AMD 自身のドライバ、ROCm）。6〜9 が GCN、10 以上が RDNA。
 2. デバイス名の `gfxNNN`（ROCm の名前。gfx803 は GCN、gfx1034 は RDNA）。

@@ -119,7 +119,7 @@ runtime / ops とバックエンドの間の約束を、次の概念だけで定
 
 ## 現状と移行計画
 
-現在の CL11 は、ggml backend として 1 ファイル（`ggml-cl11.cpp`、約 2300 行）に、ほぼすべての層が同居しています。動作と性能を保ったまま、段階的に切り出します。
+CL11 は、ggml backend として 1 ファイル（`ggml-cl11.cpp`）にほぼすべての層が同居する形で始まりました。動作と性能を保ったまま、段階的に切り出しています。P2 で OpenCL 1.1 のランタイムを `src/backends/opencl11/` に移し、P3 で tensor / ops / quant と C API を切り出しています（状態は [ROADMAP.md](../ROADMAP.md)）。
 
 ### いまのコードと各層の対応（`ggml-cl11.cpp`）
 
@@ -130,14 +130,14 @@ runtime / ops とバックエンドの間の約束を、次の概念だけで定
 | バッファ（ダミーのベースポインタ + オフセット）、公称上限を超える確保、`cl11_fill` | runtime/buffer、runtime/allocator |
 | `cl11_td`（テンソル記述子）、`cl11_fastdiv_init`、`cl11_bcast` | tensor/view・stride |
 | `cl11_rp_*`（R32 の pack / unpack / 転送） | quant/device-specific packing |
-| `cl11_op_*`、`kernels/*.cl` | ops（意味と CPU 参照実装）+ backends/opencl11（カーネル） |
+| `cl11_op_*`、`src/backends/opencl11/kernels/*.cl` | ops（意味と CPU 参照実装）+ backends/opencl11（カーネル） |
 | `cl11_supports_op_impl`、`graph_compute`、`ggml_backend_*` の各関数、`cl11_can_skip_cont` | adapters/ggml |
 
 ### 段階
 
 | 段階 | 内容 | 完了条件 |
 | --- | --- | --- |
-| P0 | モノリシックな CL11 を ggml backend として完成させる。ツリー外プラグイン化。GPU 別の最適化（GT 710/730、WX 2100、RX 6400）を llama.cpp 側の worktree で実施中 | 済み・実施中 |
+| P0 | モノリシックな CL11 を ggml backend として完成させる。ツリー外プラグイン化。GPU 別の最適化（GT 710/730、WX 2100、RX 6400） | 済み |
 | P1 | GPU 別の最適化を統合し、`adapters/ggml/` を CL11 の正本にする。性能の基準表と、正しさの許容値（公式バックエンド同士の差で校正）を固定する | 全 GPU で「正しさの基準」の必須項目を満たす |
 | P1.5 | バックエンド契約（8 概念 + 融合 + エラーと同期）を文書とヘッダで固定する | 契約の文書と C/C++ のヘッダ。CL11 の現在の機能がすべて表現できることを確認 |
 | P2 | runtime（device / buffer / stream / allocator、デバイスデータベース）と backends/opencl11 を、契約に沿って切り出す。ggml adapter は runtime を呼ぶ形にする | P1 と同じ試験 + 性能が基準表の ±3% 以内 |

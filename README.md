@@ -14,20 +14,54 @@ ScrapGpuLibrary
 └─ adapters   ggml / PyTorch extension / ONNX Runtime / standalone C API
 ```
 
-各層の責務、依存の向き、設計の前提、移行計画は [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) にまとめています。
+各層の責務、依存の向き、設計の前提、移行計画は [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) にまとめています。英語版は [README.en.md](README.en.md) です。
 
 ## 現状
 
-最初の成果は、OpenCL 1.1 だけで動く ggml backend「CL11」です。いまは 1 つの実装に全層が同居していて、`adapters/ggml/` に置いています。ここから runtime / tensor / ops / quant / backends/opencl11 を段階的に切り出します（ARCHITECTURE.md の P1〜P3）。
+最初の成果は、OpenCL 1.1 だけで動く ggml backend「CL11」です。v0.2 では、1 つのファイルに全層が同居していた実装を、runtime / backends / core / adapter に切り出しています（[docs/plans/V0.2_SPLIT_BRIEF.md](docs/plans/V0.2_SPLIT_BRIEF.md)）。main には、切り出し前の実装がそのまま残っています。
 
 | 段階 | 内容 | 状態 |
 | --- | --- | --- |
-| P0 | CL11（ggml backend）の実装と GPU 別の最適化、ツリー外プラグイン化 | 済み |
-| P1 | GPU 別の最適化の統合、性能の基準表と正しさの許容値の固定 | 済み（KL ダイバージェンスの許容値は、モデルと文章ごとに公式バックエンドで校正する） |
-| P2 | runtime と backends/opencl11 の切り出し | 未着手 |
-| P3 | tensor / ops / quant の切り出し、C API | 未着手 |
+| P0 | CL11（ggml backend）の実装と GPU 別の最適化、ツリー外プラグイン化 | 済み。Gate 0 で速度と正しさの基準表を固定（[docs/BASELINES.md](docs/BASELINES.md)） |
+| P1 | GPU 別の最適化の統合、性能の基準表と正しさの許容値の固定 | 済み（Gate 1）。契約は [docs/API_CONTRACT.md](docs/API_CONTRACT.md)。KL ダイバージェンスの許容値は、モデルと文章ごとに公式バックエンドで校正する |
+| P2 | runtime と backends/opencl11 の切り出し | 済み（Gate 2、2026-10-09）。device / context / kernels / buffer / executor を移し、ggml の include を外した。TB250 の 6 構成はすべて基準表の範囲内（NVIDIA は -0.9%〜+0.3%）、1 トークンあたりの起動回数・`test-backend-ops`・greedy の一致は分割前と同じ |
+| P3 | tensor / ops / quant の切り出し、ggml なしで呼べる C API | 実施中（[docs/plans/PHASE3_STANDALONE.md](docs/plans/PHASE3_STANDALONE.md)） |
 | P4 | multi-GPU transport | 未着手 |
 | P5 | バックエンド（opencl12 / vulkan / cuda）と adapter（PyTorch / ONNX Runtime）の追加 | 未着手 |
+
+今後の予定は [ROADMAP.md](ROADMAP.md) にまとめています。
+
+### コードの置き場所
+
+| パス | 内容 |
+| --- | --- |
+| `src/backends/opencl11/` | OpenCL 1.1 バックエンド。device（能力・世代・調整値）、context（queue・program の遅延生成）、kernels（カーネル表・program build・`.cl` の埋め込み）、buffer（確保・上限・遅延確保の probe）、executor（起動とプロファイル）、device_state（デバイスの実行時の状態）、tensor_abi（カーネルに渡す記述子）。ggml の include はありません |
+| `src/tensor/` | ggml と OpenCL に依存しない tensor モジュール（dtype、TensorDesc、ビュー・転置・ブロードキャスト、除算なしの添字、R32 の配置） |
+| `src/core/` | ggml と OpenCL に依存しない共通層。ABI 版、op の契約検証、backend の登録、CPU 参照実装（`src/core/ref/`：全演算と Q4_0 / Q8_0 / Q4_K / Q6_K の量子化・逆量子化） |
+| `include/scrapgpu/` | 公開の C API（`scrapgpu_` 接頭辞）と契約のヘッダ |
+| `adapters/ggml/` | ggml adapter。CL11 のバックエンド本体（`ggml-cl11.cpp`）と検証ツール（`mvm_check`、`attn_check`、`kepler-sweep`） |
+| `tests/core/`、`tests/tensor/`、`tests/ref/` | 契約テスト、tensor モジュールの試験、CPU 参照実装の試験（いずれも llama.cpp なしで動く） |
+
+### ビルド
+
+core と契約テストは llama.cpp なしでビルドできます。
+
+```bash
+cmake -S . -B build
+cmake --build build
+ctest --test-dir build
+```
+
+| CMake の選択肢 | 既定 | 内容 |
+| --- | --- | --- |
+| `SCRAPGPU_BUILD_CORE` | `ON` | ggml と OpenCL を使わない共通層（`scrapgpu_core`） |
+| `SCRAPGPU_BUILD_OPENCL11` | `OFF` | OpenCL 1.1 バックエンド（`scrapgpu_opencl11`）。`CL_TARGET_OPENCL_VERSION=110` を定義します |
+| `SCRAPGPU_BUILD_GGML_ADAPTER` | `OFF` | ggml adapter。`ON` で `adapters/ggml` を追加します |
+| `SCRAPGPU_BUILD_TESTS` | `ON` | 契約テストと依存の検査 |
+
+- `ctest` は、契約テストと、`src/core` と公開ヘッダーに ggml・OpenCL の include がなく、`src/backends/opencl11` に ggml の include がないことを確かめる検査（`cmake/check_core_dependencies.cmake`）を実行します。
+- ggml adapter は llama.cpp b11384 向けです。ツリー外プラグインとツリー内パッチの両方のビルド方法は [adapters/ggml/](adapters/ggml/) を参照してください。
+- 変更ごとに実行する検査は [CONTRIBUTING.md](CONTRIBUTING.md) にまとめています。
 
 ### CL11
 
@@ -61,4 +95,4 @@ CL11 は [llama.cpp](https://github.com/ggml-org/llama.cpp) b11384（commit 0fae
 
 ## ライセンス
 
-MIT License（[LICENSE](LICENSE)）。CL11 は ggml / llama.cpp（MIT）のインターフェースと量子化形式の上に作られています。
+GNU General Public License v3.0 以降（GPL-3.0-or-later、[LICENSE](LICENSE)）。ggml / llama.cpp（MIT）に由来する部分とその著作権表示は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) にまとめています。

@@ -3,14 +3,16 @@
 #
 #   adapters/ggml/llama.cpp/install-in-tree.sh <llama.cpp dir>
 #
-# - copies CMakeLists.txt, ggml-cl11.cpp and kernels/ to <llama.cpp>/ggml/src/ggml-cl11/
-#   and include/ggml-cl11.h to <llama.cpp>/ggml/include/
+# - copies CMakeLists.txt, ggml-cl11.cpp, OpenCL11 backend sources and kernels/, the tensor module
+#   and the scrapgpu public headers to <llama.cpp>/ggml/src/ggml-cl11/, and include/ggml-cl11.h to
+#   <llama.cpp>/ggml/include/
 # - applies in-tree-registration.patch (CMake option GGML_CL11 + backend registry)
 # Idempotent: files are only copied when they differ, an already applied patch is skipped.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 adapter="$(cd "$here/.." && pwd)"
+repo="$(cd "$adapter/../.." && pwd)"
 patch_file="$here/in-tree-registration.patch"
 expected_commit="0faee50"   # llama.cpp b11384
 
@@ -40,14 +42,46 @@ copy_if_different() { # src dst
 dest="$tree/ggml/src/ggml-cl11"
 copy_if_different "$adapter/CMakeLists.txt" "$dest/CMakeLists.txt"
 copy_if_different "$adapter/ggml-cl11.cpp"  "$dest/ggml-cl11.cpp"
-for f in "$adapter"/kernels/*.cl; do
-    copy_if_different "$f" "$dest/kernels/$(basename "$f")"
+for f in "$repo"/src/backends/opencl11/*.{h,cpp,cmake}; do
+    copy_if_different "$f" "$dest/opencl11/$(basename "$f")"
+done
+for f in "$repo"/src/tensor/*.{h,cpp}; do
+    copy_if_different "$f" "$dest/tensor/$(basename "$f")"
+done
+for f in "$repo"/include/scrapgpu/*.h; do
+    copy_if_different "$f" "$dest/scrapgpu/$(basename "$f")"
+done
+for f in "$repo"/src/backends/opencl11/kernels/*.cl; do
+    copy_if_different "$f" "$dest/opencl11/kernels/$(basename "$f")"
 done
 copy_if_different "$adapter/include/ggml-cl11.h" "$tree/ggml/include/ggml-cl11.h"
-# kernels that no longer exist in the adapter
+# stale kernel location from pre-split installs
 if [ -d "$dest/kernels" ]; then
     for f in "$dest"/kernels/*.cl; do
-        if [ ! -f "$adapter/kernels/$(basename "$f")" ]; then
+        if [ -e "$f" ]; then
+            rm "$f"; echo "removed  ${f#"$tree"/}"; changed=1
+        fi
+    done
+fi
+# kernels that no longer exist in the adapter
+if [ -d "$dest/opencl11/kernels" ]; then
+    for f in "$dest"/opencl11/kernels/*.cl; do
+        if [ ! -f "$repo/src/backends/opencl11/kernels/$(basename "$f")" ]; then
+            rm "$f"; echo "removed  ${f#"$tree"/}"; changed=1
+        fi
+    done
+fi
+# tensor / public header copies that no longer exist in the repository
+if [ -d "$dest/tensor" ]; then
+    for f in "$dest"/tensor/*; do
+        if [ -e "$f" ] && [ ! -f "$repo/src/tensor/$(basename "$f")" ]; then
+            rm "$f"; echo "removed  ${f#"$tree"/}"; changed=1
+        fi
+    done
+fi
+if [ -d "$dest/scrapgpu" ]; then
+    for f in "$dest"/scrapgpu/*.h; do
+        if [ -e "$f" ] && [ ! -f "$repo/include/scrapgpu/$(basename "$f")" ]; then
             rm "$f"; echo "removed  ${f#"$tree"/}"; changed=1
         fi
     done
