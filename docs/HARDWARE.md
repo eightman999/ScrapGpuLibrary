@@ -31,7 +31,8 @@
 | NVIDIA 390 の Vulkan ICD | vulkaninfo や llama.cpp（Vulkan）がクラッシュする | Vulkan を使うプロセスには `VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.json` を指定し、AMD だけを見せる |
 | NVIDIA 390（GT 430 / GT 730） | `CL_DEVICE_MAX_MEM_ALLOC_SIZE` を超える `clCreateBuffer` も成功し、末尾まで正しく読み書きできる | CL11 は公称上限を超える確保も試し、末尾への書き込みで遅延確保の失敗を検出する（`GGML_CL11_STRICT_ALLOC=1` で無効化） |
 | NVIDIA 390 + Kepler（GT 730） | `__constant` 引数に渡したサブバッファ（`clCreateSubBuffer`）の開始オフセットが無視され、親バッファの先頭が読まれる。Fermi（GT 430）では正しく動く | Kepler では、src1 を定数メモリで渡す経路を無効にする |
-| NVIDIA 390（pyopencl で確認） | 1 プロセスで 2 枚目の GPU を開くと `INVALID_DEVICE` になる | 1 プロセス 1 GPU で使う |
+| NVIDIA 390（ScrapGpuLibrary の C API で確認、2026-10-10） | 1 プロセスで Fermi（GT 430）と Kepler（GT 730 / GT 710）を両方開くと、後から開いた方の `clCreateContext` が `CL_INVALID_DEVICE` になる（順番によらない）。Kepler 同士（GT 730 + GT 710）、NVIDIA と AMD の組は 1 プロセスで同時に動く | GT 430 だけ別のプロセスにする。GT 730・GT 710・RX 6400・WX 2100 の 4 枚は 1 プロセスで使える |
+| Mesa（rusticl を有効にしたとき） | rusticl の ICD だけを読ませても、Radeon が Clover のプラットフォームにも現れる。RX 6400 を Clover で開くと GPU がリセットされる（amdgpu の soft recovery） | `GGML_CL11_PLATFORMS=NVIDIA,rusticl` でプラットフォームを絞る |
 | Fermi 全般 | 32bit 整数の除算・剰余が多数の命令に展開されて遅い（命令数は未実測。SASS で確認する）、整数→浮動小数の変換が低速 | 除算は事前計算した定数による乗算に置き換え、バイト→float は 2^23 の仮数に埋め込む方式で変換する（[CL11.md](CL11.md)） |
 | Mesa rusticl + GCN（WX 2100） | `fma()` がソフトウェアでエミュレートされ、`mad()` の約 120 倍遅い（Clover では約 1.8 倍） | AMD では `fma` の代わりに `mad` を使う（CL11 の `CL11_MAD`）。行列積が 3.5 → 450 GFLOPS 超 |
 | Mesa（Clover / rusticl） | `CL_DEVICE_MAX_MEM_ALLOC_SIZE` を超える `clCreateBuffer` を `CL_INVALID_BUFFER_SIZE` で拒否する（NVIDIA 390 と逆） | AMD では公称上限を厳守し、上限を超えるテンソルは CPU に回す |

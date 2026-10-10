@@ -370,10 +370,12 @@ cl11_tuning cl11_tuning_for(const cl11_device_info & info) {
 
 // GGML_CL11_DEVICES (or its alias SCRAPGPU_OPENCL11_DEVICES, used when the first is not set):
 // comma separated list of substrings of the device names (case insensitive)
-bool cl11_device_selected(const std::string & name) {
-    const char * env = getenv("GGML_CL11_DEVICES");
+// true when `name` contains one of the comma separated substrings of the environment variable `var` (or of its alias),
+// or when neither is set
+static bool cl11_env_list_selected(const char * var, const char * alias, const std::string & name) {
+    const char * env = getenv(var);
     if (env == nullptr) {
-        env = getenv("SCRAPGPU_OPENCL11_DEVICES");
+        env = getenv(alias);
     }
     if (env == nullptr || *env == '\0') {
         return true;
@@ -398,6 +400,16 @@ bool cl11_device_selected(const std::string & name) {
         }
     }
     return false;
+}
+
+bool cl11_device_selected(const std::string & name) {
+    return cl11_env_list_selected("GGML_CL11_DEVICES", "SCRAPGPU_OPENCL11_DEVICES", name);
+}
+
+// GGML_CL11_PLATFORMS (alias SCRAPGPU_OPENCL11_PLATFORMS): comma separated substrings of the OpenCL platform names to use, e.g.
+// "NVIDIA,rusticl". A Radeon is visible on Mesa Clover and rusticl at the same time; Clover hangs the RX 6400 (docs/HARDWARE.md).
+bool cl11_platform_selected(const std::string & name) {
+    return cl11_env_list_selected("GGML_CL11_PLATFORMS", "SCRAPGPU_OPENCL11_PLATFORMS", name);
 }
 
 bool cl11_probe_device_infos(void (*emit)(const cl11_device_info & info, bool strict_alloc)) {
@@ -426,6 +438,12 @@ bool cl11_probe_device_infos(void (*emit)(const cl11_device_info & info, bool st
 
         char pname[256] = {};
         clGetPlatformInfo(platform, CL_PLATFORM_NAME, sizeof(pname) - 1, pname, nullptr);
+        if (!cl11_platform_selected(pname)) {
+            if (cl11_backend_debug()) {
+                fprintf(stderr, "%s: platform '%s' not selected by GGML_CL11_PLATFORMS\n", __func__, pname);
+            }
+            continue;
+        }
 
         for (cl_device_id device : devices) {
             cl11_device_info info;
