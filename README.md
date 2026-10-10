@@ -18,7 +18,7 @@ ScrapGpuLibrary
 
 ## 現状
 
-最初の成果は、OpenCL 1.1 だけで動く ggml backend「CL11」です。v0.2 では、1 つのファイルに全層が同居していた実装を、runtime / backends / core / adapter に切り出しています（[docs/plans/V0.2_SPLIT_BRIEF.md](docs/plans/V0.2_SPLIT_BRIEF.md)）。main には、切り出し前の実装がそのまま残っています。
+最初の成果は、OpenCL 1.1 だけで動く ggml backend「CL11」です。v0.2 では、1 つのファイルに全層が同居していた実装を、runtime / backends / core / adapter に切り出しています（[docs/plans/V0.2_SPLIT_BRIEF.md](docs/plans/V0.2_SPLIT_BRIEF.md)）。現在の `main` には P3 までの分離済み実装があります。ggml adapter は引き続き互換性のための翻訳層を持ち、複数 GPU 間の transport や PyTorch / ONNX Runtime adapter は未実装です。
 
 | 段階 | 内容 | 状態 |
 | --- | --- | --- |
@@ -30,6 +30,38 @@ ScrapGpuLibrary
 | P5 | バックエンド（opencl12 / vulkan / cuda）と adapter（PyTorch / ONNX Runtime）の追加 | 実施中。Vulkan バックエンドの最初の段階（AMD、加算・乗算・RMS_NORM・行列積）、PyTorch の custom op（Stage A）、ONNX Runtime のプラグイン EP（MatMul・Add・Mul）。CUDA はドライバの切り替えが要るので対象外 |
 
 今後の予定は [ROADMAP.md](ROADMAP.md) にまとめています。
+
+### クイックスタート
+
+**1. コアと CPU 参照実装を試す（llama.cpp / OpenCL 不要）**
+
+CMake 3.14 以降と C/C++ コンパイラ（C++17）が必要です。
+
+```bash
+git clone https://github.com/eightman999/ScrapGpuLibrary.git
+cd ScrapGpuLibrary
+cmake -S . -B build -DSCRAPGPU_BUILD_TESTS=ON
+cmake --build build -j
+ctest --test-dir build --output-on-failure
+```
+
+**2. OpenCL 1.1 バックエンドと独立 C API のサンプルを試す**
+
+OpenCL ヘッダー、ICD ローダー、対象 GPU に対応する OpenCL 実装が別途必要です。
+
+```bash
+cmake -S . -B build-opencl \
+  -DSCRAPGPU_BUILD_OPENCL11=ON \
+  -DSCRAPGPU_BUILD_EXAMPLES=ON \
+  -DSCRAPGPU_BUILD_TESTS=ON
+cmake --build build-opencl -j
+ctest --test-dir build-opencl --output-on-failure
+./build-opencl/scrapgpu_standalone_matmul
+```
+
+この例は **ggml / llama.cpp に依存せず**、公開 C API で Q4_0 重みを R32 配置で GPU に転送し、`MUL_MAT` の結果を CPU 参照実装と NMSE で比較します。OpenCL デバイスが見つからない場合、サンプルは演算せず終了します。GPU テストもデバイスがなければ skip されるため、**テストが終了コード 0 でも GPU 実行が検証されたとは限りません**。
+
+llama.cpp から使う場合は [ggml adapter の手順](adapters/ggml/) を参照してください（対象は llama.cpp b11384）。性能と対応演算は [docs/BASELINES.md](docs/BASELINES.md) と [docs/CL11.md](docs/CL11.md) に記録しています。
 
 ### コードの置き場所
 
@@ -57,6 +89,7 @@ ctest --test-dir build
 | `SCRAPGPU_BUILD_CORE` | `ON` | ggml と OpenCL を使わない共通層（`scrapgpu_core`） |
 | `SCRAPGPU_BUILD_OPENCL11` | `OFF` | OpenCL 1.1 バックエンド（`scrapgpu_opencl11`）。`CL_TARGET_OPENCL_VERSION=110` を定義します |
 | `SCRAPGPU_BUILD_GGML_ADAPTER` | `OFF` | ggml adapter。`ON` で `adapters/ggml` を追加します |
+| `SCRAPGPU_BUILD_EXAMPLES` | OPENCL11 と同じ | ggml なしの C API サンプル。OpenCL11 が必要 |
 | `SCRAPGPU_BUILD_TESTS` | `ON` | 契約テストと依存の検査 |
 
 - `ctest` は、契約テストと、`src/core` と公開ヘッダーに ggml・OpenCL の include がなく、`src/backends/opencl11` に ggml の include がないことを確かめる検査（`cmake/check_core_dependencies.cmake`）を実行します。
