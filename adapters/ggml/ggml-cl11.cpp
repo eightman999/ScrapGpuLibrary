@@ -375,11 +375,15 @@ static bool ggml_backend_cl11_buft_is_host(ggml_backend_buffer_type_t buft) {
 static const ggml_backend_buffer_type_i ggml_backend_cl11_buft_i = {
     /* .get_name         = */ ggml_backend_cl11_buft_get_name,
     /* .alloc_buffer     = */ ggml_backend_cl11_buft_alloc_buffer,
+#if GGML_BACKEND_API_VERSION >= 3 // llama.cpp b11384: alloc_buffer_n / get_alloc_size_n (absent in older trees, e.g. mesh-llm's Skippy)
     /* .alloc_buffer_n   = */ nullptr,
+#endif
     /* .get_alignment    = */ ggml_backend_cl11_buft_get_alignment,
     /* .get_max_size     = */ ggml_backend_cl11_buft_get_max_size,
     /* .get_alloc_size   = */ nullptr,
+#if GGML_BACKEND_API_VERSION >= 3
     /* .get_alloc_size_n = */ nullptr,
+#endif
     /* .is_host          = */ ggml_backend_cl11_buft_is_host,
 };
 
