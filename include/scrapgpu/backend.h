@@ -50,6 +50,10 @@ typedef struct scrapgpu_backend_vtable {
     scrapgpu_status (*tensor_upload)(scrapgpu_stream_t * stream, const scrapgpu_tensor_desc * desc, const void * host, size_t size);
     scrapgpu_status (*tensor_download)(scrapgpu_stream_t * stream, const scrapgpu_tensor_desc * desc, void * host, size_t size);
     scrapgpu_status (*op_execute)(scrapgpu_stream_t * stream, const scrapgpu_op_desc * desc);
+    /* ABI 0.4: identity of the device a stream runs on, so the core can take the device-copy fast
+     * path of scrapgpu_tensor_copy when src and dst are on the same device. NULL for backends
+     * registered with a smaller struct_size (the copy then always goes through the host). */
+    scrapgpu_device_t * (*stream_device)(scrapgpu_stream_t * stream);
 } scrapgpu_backend_vtable;
 
 SCRAPGPU_API scrapgpu_status scrapgpu_register_backend(const scrapgpu_backend_vtable * backend);

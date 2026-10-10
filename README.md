@@ -18,7 +18,7 @@ ScrapGpuLibrary
 
 ## 現状
 
-最初の成果は、OpenCL 1.1 だけで動く ggml backend「CL11」です。v0.2 では、1 つのファイルに全層が同居していた実装を、runtime / backends / core / adapter に切り出しています（[docs/plans/V0.2_SPLIT_BRIEF.md](docs/plans/V0.2_SPLIT_BRIEF.md)）。現在の `main` には P3 までの分離済み実装があります。ggml adapter は引き続き互換性のための翻訳層を持ち、複数 GPU 間の transport や PyTorch / ONNX Runtime adapter は未実装です。
+最初の成果は、OpenCL 1.1 だけで動く ggml backend「CL11」です。v0.2 では、1 つのファイルに全層が同居していた実装を、runtime / backends / core / adapter に切り出しています（[docs/plans/V0.2_SPLIT_BRIEF.md](docs/plans/V0.2_SPLIT_BRIEF.md)）。現在の `main` には P3 までの分離済み実装と、P4（複数 GPU）・P5（Vulkan バックエンド、PyTorch / ONNX Runtime adapter）の最初の段階があります。ggml adapter は引き続き互換性のための翻訳層を持ちます。
 
 | 段階 | 内容 | 状態 |
 | --- | --- | --- |
@@ -26,8 +26,8 @@ ScrapGpuLibrary
 | P1 | GPU 別の最適化の統合、性能の基準表と正しさの許容値の固定 | 済み（Gate 1）。契約は [docs/API_CONTRACT.md](docs/API_CONTRACT.md)。KL ダイバージェンスの許容値は、モデルと文章ごとに公式バックエンドで校正する |
 | P2 | runtime と backends/opencl11 の切り出し | 済み（Gate 2、2026-10-09）。device / context / kernels / buffer / executor を移し、ggml の include を外した。TB250 の 6 構成はすべて基準表の範囲内（NVIDIA は -0.9%〜+0.3%）、1 トークンあたりの起動回数・`test-backend-ops`・greedy の一致は分割前と同じ |
 | P3 | tensor / ops / quant の切り出し、ggml なしで呼べる C API | 済み（Gate 3、2026-10-10）。公開 C API だけで GPU の演算を呼べる（`examples/standalone_matmul.c`）。TB250 の 6 構成で ggml なしの演算の試験が全件通り、回帰は基準以内（[docs/plans/PHASE3_STANDALONE.md](docs/plans/PHASE3_STANDALONE.md)、判定は [docs/MIGRATION_PLAN.md](docs/MIGRATION_PLAN.md)） |
-| P4 | multi-GPU transport | 未着手 |
-| P5 | バックエンド（opencl12 / vulkan / cuda）と adapter（PyTorch / ONNX Runtime）の追加 | 未着手 |
+| P4 | multi-GPU transport | 実施中。1 プロセスで GT 730・GT 710・RX 6400・WX 2100 を使い、Qwen3-8B Q4_K_M を全層 GPU で動かした（CL11 4 枚で生成 4.63 t/s、CPU の約 13 倍）。C API の GPU 間転送とパイプラインの例を追加（[docs/MULTI_GPU.md](docs/MULTI_GPU.md)） |
+| P5 | バックエンド（opencl12 / vulkan / cuda）と adapter（PyTorch / ONNX Runtime）の追加 | 実施中。Vulkan バックエンドの最初の段階（AMD、加算・乗算・RMS_NORM・行列積）、PyTorch の custom op（Stage A）、ONNX Runtime のプラグイン EP（MatMul・Add・Mul）。CUDA はドライバの切り替えが要るので対象外 |
 
 今後の予定は [ROADMAP.md](ROADMAP.md) にまとめています。
 
@@ -38,7 +38,7 @@ ScrapGpuLibrary
 CMake 3.14 以降と C/C++ コンパイラ（C++17）が必要です。
 
 ```bash
-git clone https://github.com/eightman999/ScrapGpuLibrary.git
+git clone https://github.com/jimoto-no-llm/ScrapGpuLibrary.git
 cd ScrapGpuLibrary
 cmake -S . -B build -DSCRAPGPU_BUILD_TESTS=ON
 cmake --build build -j

@@ -1,16 +1,23 @@
-// GPU tests of the ops through the public C API only: every op the opencl11 backend reports as
+// GPU tests of the ops through the public C API only: every op the selected backend reports as
 // supported is run on the device and compared against the CPU reference (scrapgpu_ref_execute).
-// Exit code 77 (ctest SKIP_RETURN_CODE) when no OpenCL device exists.
+// The backend is selected with SCRAPGPU_TEST_BACKEND=opencl11|vulkan (default opencl11).
+// Exit code 77 (ctest SKIP_RETURN_CODE) when no device of the backend exists.
 
 #include "scrapgpu/api.h"
 #include "scrapgpu/buffer.h"
 #include "scrapgpu/device.h"
-#include "scrapgpu/opencl11.h"
 #include "scrapgpu/op.h"
 #include "scrapgpu/reference.h"
 #include "scrapgpu/status.h"
 #include "scrapgpu/stream.h"
 #include "scrapgpu/tensor.h"
+
+#if defined(SCRAPGPU_OPS_TEST_WITH_OPENCL11)
+#include "scrapgpu/opencl11.h"
+#endif
+#if defined(SCRAPGPU_OPS_TEST_WITH_VULKAN)
+#include "scrapgpu/vulkan.h"
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -137,6 +144,9 @@ int64_t tn(const scrapgpu_tensor_desc & t) {
 scrapgpu_device_t * g_dev = nullptr;
 scrapgpu_stream_t * g_stream = nullptr;
 std::vector<scrapgpu_buffer_t *> g_buffers;
+// the layout of quantized weight tensors on the selected backend: R32 for opencl11 (the repacked
+// layout), the natural GGUF block layout for vulkan
+scrapgpu_layout g_weight_layout = SCRAPGPU_LAYOUT_R32;
 
 scrapgpu_buffer_t * g_alloc(size_t bytes) {
     scrapgpu_buffer_t * buf = nullptr;
@@ -577,7 +587,7 @@ void test_get_rows() {
     }
     for (scrapgpu_dtype qt : {SCRAPGPU_DTYPE_Q4_0, SCRAPGPU_DTYPE_Q8_0, SCRAPGPU_DTYPE_Q4_K, SCRAPGPU_DTYPE_Q6_K}) {
         const int64_t k = qt == SCRAPGPU_DTYPE_Q4_K || qt == SCRAPGPU_DTYPE_Q6_K ? 256 : 64;
-        TT s0 = tmake(tdesc(qt, k, 32), SCRAPGPU_LAYOUT_R32);
+        TT s0 = tmake(tdesc(qt, k, 32), g_weight_layout);
         tquantize(s0, frand_vec(tn(s0.rdesc)));
         char name[48];
         snprintf(name, sizeof(name), "GET_ROWS %s r32",
@@ -696,7 +706,7 @@ void test_mul_mat() {
     for (scrapgpu_dtype qt : {SCRAPGPU_DTYPE_Q4_0, SCRAPGPU_DTYPE_Q8_0, SCRAPGPU_DTYPE_Q4_K, SCRAPGPU_DTYPE_Q6_K}) {
         const int64_t k = qt == SCRAPGPU_DTYPE_Q4_K || qt == SCRAPGPU_DTYPE_Q6_K ? 256 : 96;
         for (int64_t cols : {1, 4}) {
-            TT s0 = tmake(tdesc(qt, k, 24), SCRAPGPU_LAYOUT_R32);
+            TT s0 = tmake(tdesc(qt, k, 24), g_weight_layout);
             tquantize(s0, frand_vec(tn(s0.rdesc)));
             TT x = tmake(tdesc(SCRAPGPU_DTYPE_F32, k, cols));
             tfill(x, frand_vec(tn(x.rdesc)));
@@ -735,7 +745,7 @@ void test_mul_mat_multi() {
     for (int n : {2, 3}) {
         std::vector<TT> ins, outs;
         for (int i = 0; i < n; ++i) {
-            TT w = tmake(tdesc(SCRAPGPU_DTYPE_Q4_0, 96, 8), SCRAPGPU_LAYOUT_R32);
+            TT w = tmake(tdesc(SCRAPGPU_DTYPE_Q4_0, 96, 8), g_weight_layout);
             tquantize(w, frand_vec(tn(w.rdesc)));
             ins.push_back(w);
         }
@@ -765,7 +775,7 @@ void test_mul_mat_id() {
     for (scrapgpu_dtype qt : {SCRAPGPU_DTYPE_Q4_0, SCRAPGPU_DTYPE_Q4_K}) {
         const int64_t k = qt == SCRAPGPU_DTYPE_Q4_0 ? 96 : 256;
         const int64_t m = 8, e = 4, used = 2, tok = 3;
-        TT s0 = tmake(tdesc(qt, k, m, e), SCRAPGPU_LAYOUT_R32);
+        TT s0 = tmake(tdesc(qt, k, m, e), g_weight_layout);
         tquantize(s0, frand_vec(tn(s0.rdesc)));
         TT x = tmake(tdesc(SCRAPGPU_DTYPE_F32, k, used, tok));
         tfill(x, frand_vec(tn(x.rdesc)));
@@ -1037,15 +1047,146 @@ void test_buffer_ops() {
     std::printf("PASS  buffer copy/fill\n");
 }
 
+// scrapgpu_tensor_copy: bytes must survive the transport exactly, and the copy must be ordered
+// after the work already enqueued on the source stream / before the work enqueued later on the
+// destination stream (docs/API_CONTRACT.md)
+void test_tensor_copy() {
+    {
+        // same device, two streams: the copy must observe the ADD enqueued before it on the source
+        // stream and precede the download enqueued later on the destination stream
+        scrapgpu_stream_t * s2 = nullptr;
+        CHECK_OK(scrapgpu_stream_create(g_dev, &s2));
+        TT x = tmake(tdesc(SCRAPGPU_DTYPE_F32, 257, 3));
+        TT one = tmake(tdesc(SCRAPGPU_DTYPE_F32, 257, 3));
+        TT sum = tmake(tdesc(SCRAPGPU_DTYPE_F32, 257, 3));
+        TT cpy = tmake(tdesc(SCRAPGPU_DTYPE_F32, 257, 3));
+        tfill(x, frand_vec(tn(x.rdesc)));
+        tfill(one, frand_vec(tn(one.rdesc)));
+        tupload(x);
+        tupload(one);
+        const scrapgpu_tensor_desc ins[2] = {one.gdesc, x.gdesc};
+        scrapgpu_tensor_desc sum_d = sum.gdesc;
+        scrapgpu_op_desc d{};
+        d.struct_size = sizeof(d);
+        d.op = SCRAPGPU_OP_ADD;
+        d.inputs = ins;
+        d.input_count = 2;
+        d.outputs = &sum_d;
+        d.output_count = 1;
+        CHECK_OK(scrapgpu_op_execute(g_stream, &d)); // still in flight
+        CHECK_OK(scrapgpu_tensor_copy(g_stream, &sum.gdesc, s2, &cpy.gdesc));
+        CHECK_OK(scrapgpu_tensor_download(s2, &cpy.gdesc, cpy.host.data(), cpy.host.size()));
+        tdownload(sum);
+        if (std::memcmp(cpy.host.data(), sum.host.data(), cpy.host.size()) != 0) {
+            const float * a = reinterpret_cast<const float *>(cpy.host.data());
+            const float * b = reinterpret_cast<const float *>(sum.host.data());
+            size_t i = 0;
+            while (i < cpy.host.size() / 4 && std::memcmp(&a[i], &b[i], 4) == 0) {
+                ++i;
+            }
+            std::printf("FAIL  %-24s first difference at element %zu of %zu: copy %g, source %g\n", "tensor_copy same dev", i,
+                        cpy.host.size() / 4, a[i], b[i]);
+            std::exit(1);
+        }
+        std::printf("PASS  %-24s F32 after an enqueued ADD, 2 streams, exact bytes\n", "tensor_copy same dev");
+        ++g_run;
+        CHECK_OK(scrapgpu_stream_free(s2));
+    }
+    {
+        // a blocked dtype through one stream, plus the R32 rejection
+        TT q = tmake(tdesc(SCRAPGPU_DTYPE_Q4_0, 96, 5));
+        tquantize(q, frand_vec(tn(q.rdesc)));
+        TT qc = tmake(tdesc(SCRAPGPU_DTYPE_Q4_0, 96, 5));
+        tupload(q); // natural bytes (the R32 packing only happens with layout = R32)
+        CHECK_OK(scrapgpu_tensor_copy(g_stream, &q.gdesc, g_stream, &qc.gdesc));
+        CHECK_OK(scrapgpu_tensor_download(g_stream, &qc.gdesc, qc.host.data(), qc.host.size()));
+        CHECK(std::memcmp(qc.host.data(), q.host.data(), qc.host.size()) == 0);
+        q.gdesc.layout = SCRAPGPU_LAYOUT_R32;
+        qc.gdesc.layout = SCRAPGPU_LAYOUT_R32;
+        CHECK(scrapgpu_tensor_copy(g_stream, &q.gdesc, g_stream, &qc.gdesc) == SCRAPGPU_STATUS_UNSUPPORTED);
+        std::printf("PASS  %-24s Q4_0 natural exact bytes, R32 rejected\n", "tensor_copy q4_0");
+        ++g_run;
+    }
+    {
+        // across devices (when two devices exist), both directions, exact bytes
+        if (scrapgpu_get_device_count() < 2) {
+            std::printf("SKIP  %-24s needs a second device\n", "tensor_copy cross dev");
+            ++g_skipped;
+        } else {
+            scrapgpu_device_t * dev1 = nullptr;
+            CHECK_OK(scrapgpu_get_device(1, &dev1));
+            scrapgpu_stream_t * s1 = nullptr;
+            CHECK_OK(scrapgpu_stream_create(dev1, &s1));
+            const int64_t n = 513;
+            const size_t bytes = (size_t) n * 4;
+            std::vector<uint8_t> pat(bytes), back(bytes), back2(bytes);
+            for (size_t i = 0; i < bytes; ++i) {
+                pat[i] = (uint8_t) (i * 131u + 7u);
+            }
+            scrapgpu_buffer_t * b0 = g_alloc(bytes);
+            scrapgpu_buffer_t * b1 = nullptr, * b0r = nullptr;
+            CHECK_OK(scrapgpu_buffer_alloc(dev1, bytes, &b1));
+            CHECK_OK(scrapgpu_buffer_alloc(g_dev, bytes, &b0r));
+            scrapgpu_tensor_desc t0 = tdesc(SCRAPGPU_DTYPE_I32, n);
+            scrapgpu_tensor_desc t1 = tdesc(SCRAPGPU_DTYPE_I32, n);
+            scrapgpu_tensor_desc t0r = tdesc(SCRAPGPU_DTYPE_I32, n);
+            t0.buffer = b0;
+            t1.buffer = b1;
+            t0r.buffer = b0r;
+            CHECK_OK(scrapgpu_tensor_upload(g_stream, &t0, pat.data(), bytes));
+            CHECK_OK(scrapgpu_tensor_copy(g_stream, &t0, s1, &t1));
+            CHECK_OK(scrapgpu_tensor_download(s1, &t1, back.data(), bytes));
+            CHECK(std::memcmp(back.data(), pat.data(), bytes) == 0);
+            for (size_t i = 0; i < bytes; ++i) {
+                back[i] ^= 0x5au;
+            }
+            CHECK_OK(scrapgpu_tensor_upload(s1, &t1, back.data(), bytes));
+            CHECK_OK(scrapgpu_tensor_copy(s1, &t1, g_stream, &t0r));
+            CHECK_OK(scrapgpu_tensor_download(g_stream, &t0r, back2.data(), bytes));
+            CHECK(std::memcmp(back2.data(), back.data(), bytes) == 0);
+            CHECK_OK(scrapgpu_buffer_free(b1));
+            CHECK_OK(scrapgpu_buffer_free(b0r));
+            std::printf("PASS  %-24s both directions, exact bytes\n", "tensor_copy cross dev");
+            ++g_run;
+            CHECK_OK(scrapgpu_stream_free(s1));
+        }
+    }
+}
+
 } // namespace
 
 int main() {
-    if (scrapgpu_opencl11_register() != SCRAPGPU_STATUS_OK) {
-        std::fprintf(stderr, "scrapgpu_opencl11_register failed: %s\n", scrapgpu_last_error());
+    const char * backend = std::getenv("SCRAPGPU_TEST_BACKEND");
+    if (backend == nullptr || backend[0] == '\0') {
+        backend = "opencl11";
+    }
+    if (std::strcmp(backend, "opencl11") == 0) {
+#if defined(SCRAPGPU_OPS_TEST_WITH_OPENCL11)
+        if (scrapgpu_opencl11_register() != SCRAPGPU_STATUS_OK) {
+            std::fprintf(stderr, "scrapgpu_opencl11_register failed: %s\n", scrapgpu_last_error());
+            return 1;
+        }
+#else
+        std::printf("SKIP: built without the OpenCL 1.1 backend\n");
+        return 77;
+#endif
+    } else if (std::strcmp(backend, "vulkan") == 0) {
+#if defined(SCRAPGPU_OPS_TEST_WITH_VULKAN)
+        if (scrapgpu_vulkan_register() != SCRAPGPU_STATUS_OK) {
+            std::fprintf(stderr, "scrapgpu_vulkan_register failed: %s\n", scrapgpu_last_error());
+            return 1;
+        }
+        g_weight_layout = SCRAPGPU_LAYOUT_NATURAL;
+#else
+        std::printf("SKIP: built without the Vulkan backend\n");
+        return 77;
+#endif
+    } else {
+        std::fprintf(stderr, "unknown SCRAPGPU_TEST_BACKEND '%s'\n", backend);
         return 1;
     }
     if (scrapgpu_get_device_count() == 0) {
-        std::printf("SKIP: no OpenCL device\n");
+        std::printf("SKIP: no %s device\n", backend);
         return 77;
     }
     CHECK_OK(scrapgpu_get_device(0, &g_dev));
@@ -1059,6 +1200,7 @@ int main() {
     CHECK_OK(scrapgpu_stream_create(g_dev, &g_stream));
 
     test_buffer_ops();
+    test_tensor_copy();
     test_binary();
     test_unary_family();
     test_glu();

@@ -121,6 +121,7 @@ cl11_tuning cl11_tuning_for(const cl11_device_info & info);
 bool cl11_mmx_parse(const std::string & spec_in, cl11_mmx & m);
 bool cl11_mmx_valid(const cl11_mmx & m, size_t local_mem, size_t max_wg, std::string & why);
 bool cl11_device_selected(const std::string & name);
+bool cl11_platform_selected(const std::string & name);
 bool cl11_probe_device_infos(void (*emit)(const cl11_device_info & info, bool strict_alloc));
 
 #endif

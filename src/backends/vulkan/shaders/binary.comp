@@ -1,0 +1,44 @@
+#version 450
+
+// Elementwise ADD / MUL on F32 tensors with the reference broadcast rule (src1 repeats in every
+// dim). Compiled twice: -DBINARY_OP_ADD and -DBINARY_OP_MUL.
+// Ported from ggml-vulkan (MIT License, Copyright (c) 2023-2026 The ggml authors), see THIRD_PARTY_NOTICES.md
+// (generic_binary_head.glsl: the push-constant shape/stride layout and the src1 index repeat).
+
+
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+
+layout(binding = 0) readonly buffer A { float data_a[]; };
+layout(binding = 1) readonly buffer B { float data_b[]; };
+layout(binding = 2) writeonly buffer D { float data_d[]; };
+
+// all offsets and strides in float elements; ne* are element counts
+layout(push_constant) uniform Params {
+    uint ne00, ne01, ne02, ne03;
+    uint a_off, a_nb0, a_nb1, a_nb2, a_nb3;
+    uint ne10, ne11, ne12, ne13;
+    uint b_off, b_nb0, b_nb1, b_nb2, b_nb3;
+    uint d_off, d_nb0, d_nb1, d_nb2, d_nb3;
+} p;
+
+void main() {
+    const uint total = p.ne00 * p.ne01 * p.ne02 * p.ne03;
+    const uint i = gl_GlobalInvocationID.y * gl_NumWorkGroups.x * gl_WorkGroupSize.x + gl_GlobalInvocationID.x;
+    if (i >= total) {
+        return;
+    }
+    uint r = i;
+    const uint i0 = r % p.ne00; r /= p.ne00;
+    const uint i1 = r % p.ne01; r /= p.ne01;
+    const uint i2 = r % p.ne02;
+    const uint i3 = r / p.ne02;
+    const float a = data_a[p.a_off + i0*p.a_nb0 + i1*p.a_nb1 + i2*p.a_nb2 + i3*p.a_nb3];
+    const float b = data_b[p.b_off + (i0 % p.ne10)*p.b_nb0 + (i1 % p.ne11)*p.b_nb1 +
+                                   (i2 % p.ne12)*p.b_nb2 + (i3 % p.ne13)*p.b_nb3];
+    const uint di = p.d_off + i0*p.d_nb0 + i1*p.d_nb1 + i2*p.d_nb2 + i3*p.d_nb3;
+#if defined(BINARY_OP_MUL)
+    data_d[di] = a * b;
+#else
+    data_d[di] = a + b;
+#endif
+}

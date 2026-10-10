@@ -18,7 +18,7 @@ The responsibilities of each layer, the direction of the dependencies, the desig
 
 ## Status
 
-The first result is CL11, a ggml backend that runs on OpenCL 1.1 alone. Version 0.2 splits the single file that held every layer into runtime / backends / core / adapter (see [docs/plans/V0.2_SPLIT_BRIEF.md](docs/plans/V0.2_SPLIT_BRIEF.md)). The current `main` contains the implementation split through P3. The ggml adapter still retains compatibility translation code; multi-GPU transport and the PyTorch / ONNX Runtime adapters are not implemented yet.
+The first result is CL11, a ggml backend that runs on OpenCL 1.1 alone. Version 0.2 splits the single file that held every layer into runtime / backends / core / adapter (see [docs/plans/V0.2_SPLIT_BRIEF.md](docs/plans/V0.2_SPLIT_BRIEF.md)). The current `main` contains the implementation split through P3 and the first slices of P4 (multi-GPU) and P5 (the Vulkan backend, the PyTorch and ONNX Runtime adapters). The ggml adapter still retains compatibility translation code.
 
 | Stage | Content | State |
 | --- | --- | --- |
@@ -26,8 +26,8 @@ The first result is CL11, a ggml backend that runs on OpenCL 1.1 alone. Version 
 | P1 | Integration of the per-GPU tuning, fixed performance baselines and correctness tolerances | Done (Gate 1). The contract is [docs/API_CONTRACT.md](docs/API_CONTRACT.md). KL divergence tolerances are calibrated per model and text against the official backends |
 | P2 | Splitting out the runtime and `backends/opencl11` | Done (Gate 2, 2026-10-09). device / context / kernels / buffer / executor moved into `src/backends/opencl11/` with no ggml includes. All six TB250 configurations are within the baseline (NVIDIA between -0.9% and +0.3%), and the launches per token, `test-backend-ops` and the greedy agreement are the same as before the split |
 | P3 | Splitting out tensor / ops / quant and a C API callable without ggml | Done (Gate 3, 2026-10-10). GPU tensor ops run through the public C API alone (`examples/standalone_matmul.c`); the ggml-free op tests pass on all six TB250 configurations and the regression stays within the baseline |
-| P4 | multi-GPU transport | Not started |
-| P5 | More backends (opencl12 / vulkan / cuda) and adapters (PyTorch / ONNX Runtime) | Not started |
+| P4 | multi-GPU transport | In progress: GT 730, GT 710, RX 6400 and WX 2100 in one process run Qwen3-8B Q4_K_M fully on the GPUs (CL11 on 4 cards: 4.63 t/s generation, 13x the CPU); GPU-to-GPU transfer and a pipeline example in the C API ([docs/MULTI_GPU.md](docs/MULTI_GPU.md)) |
+| P5 | More backends (opencl12 / vulkan / cuda) and adapters (PyTorch / ONNX Runtime) | In progress: first Vulkan slice (AMD: add, mul, RMS_NORM, mat-mul), PyTorch custom ops (stage A), ONNX Runtime plugin EP (MatMul, Add, Mul). CUDA is out of scope (it needs a driver change) |
 
 [ROADMAP.md](ROADMAP.md) collects what comes next.
 
@@ -38,7 +38,7 @@ The first result is CL11, a ggml backend that runs on OpenCL 1.1 alone. Version 
 Requires CMake 3.14+ and a C/C++ toolchain with C++17 support.
 
 ```bash
-git clone https://github.com/eightman999/ScrapGpuLibrary.git
+git clone https://github.com/jimoto-no-llm/ScrapGpuLibrary.git
 cd ScrapGpuLibrary
 cmake -S . -B build -DSCRAPGPU_BUILD_TESTS=ON
 cmake --build build -j

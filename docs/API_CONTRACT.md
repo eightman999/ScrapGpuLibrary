@@ -94,7 +94,7 @@ ROPE と SOFT_MAX の任意入力は、`desc->inputs[]` の固定順で渡す。
 ## 11. 未決事項
 
 - 2 本目以降の stream（コピー専用など）と event の形。
-- 複数の device をまたぐ転送（P4）。
+- 複数の device をまたぐ転送 → P4 で `scrapgpu_tensor_copy` として実装した（14 章）。プロセスを分けて共有メモリで受け渡す transport と転送専用 stream は未決のまま。
 - PyTorch の PrivateUse1 で必要になる、メモリの確保・解放のフック（キャッシュアロケータ）との関係。
 - 環境変数（`GGML_CL11_*`）の扱い。当面は CL11 バックエンドが読み、将来は `scrapgpu_device_config` で渡せるようにする。
 
@@ -164,3 +164,19 @@ ROPE と SOFT_MAX の任意入力は、`desc->inputs[]` の固定順で渡す。
 | Launch cost grows with program | `SCRAPGPU_DEVICE_QUIRK_LAUNCH_COST_GROWS_WITH_PROGRAM`; backend program splitting policy | Representable |
 
 Gate 1 non-representable items: **none**. Unsupported CL11 cases documented in `docs/CL11.md`（`FLASH_ATTN_EXT`、`NORM`、`GROUP_NORM`、`SSM_SCAN` / RWKV、未対応量子型、長すぎる `ARGSORT` / `TOP_K` など）は、現在のCL11機能ではなくCPU fallback対象なので、Core contractでは `op_supported` の理由付き `UNSUPPORTED` として表す。
+
+## 14. マルチデバイス間の転送（P4）
+
+`scrapgpu_tensor_copy(src_stream, src, dst_stream, dst)`（`include/scrapgpu/tensor.h`、実装は `src/core/transport.cpp`）は、同じ dtype・同じ形の連続なテンソル 2 つを任意の 2 つの device 間でコピーする。バックエンドの vtable（`buffer_read` / `buffer_write` / `buffer_copy` / `stream_sync`）だけで実装した Core の汎用コードで、OpenCL には依存しない。
+
+| 条件 | 経路 |
+| --- | --- |
+| 同じ device | device 内コピー 1 回（`buffer_copy`）。stream が異なるときは先に src 側を同期してから dst_stream に積む |
+| 異なる device / 異なるバックエンド | ホストのステージングバッファ経由。src_stream で blocking read、その後 dst_stream で write |
+
+- **順序の保証**: コピーは src_stream に先行して積まれた仕事の後、dst_stream に後で積まれる仕事の前に実行される。同じ stream は in-order キューの順序そのもの、同じ device の別 stream は src 側の同期 + dst_stream へのコピー、異なる device は blocking read（src の先行仕事の完了を含めて待つ）→ write の 2 段階がこれを保証する。OpenCL 1.1 に cross-context event はないため、この 2 段階を契約とする。
+- 書き込みも blocking なので、呼び出しが戻った時点で転送は完了している（ステージングバッファの寿命の保証でもある）。
+- 同じ dtype かつ同じ形（`ne`）、両方連続（`scrapgpu_tensor_is_contiguous`）であること。`SCRAPGPU_LAYOUT_R32` は理由付き `UNSUPPORTED`（device 上のバイト列は再配置済みで、そのまま運んでも意味が通らない。自然配置でホスト経由に移すには `tensor_download` / `tensor_upload` を使う）。
+- 同じ device かどうかの判定のため、backend vtable の末尾に `stream_device`（stream が属する device を返す）を追加した。これに伴い `SCRAPGPU_ABI_VERSION_MINOR` を 3 → 4 に上げた（vtable 末尾への追加だけで後方互換）。`stream_device` を持たない（NULL の）バックエンドは常にホスト経由になる。正しいが同じ device でも host round trip が発生する。
+- 同じバッファ内で範囲が重なるコピーは、device copy の未定義動作を避けるためホスト経由に回す。
+- 各テンソルは自分の stream の device のバッファに載っていること（異なる組合せはバックエンドが `INVALID_ARGUMENT` で拒否する）。

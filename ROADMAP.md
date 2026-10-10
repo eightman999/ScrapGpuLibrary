@@ -52,15 +52,23 @@ ggml を使わずに C API だけでテンソル演算を GPU で実行できる
 
 **Gate 3**: Gate 2 と同じ TB250 の回帰（6 構成、BASELINES.md と比べる）と、ggml を使わない単体試験と例が TB250 の 6 構成と Mac で通ること。
 
-## P4 multi-GPU transport — 未着手
+## P4 multi-GPU transport — C API の転送は済み（実機の複数 GPU での検証は残る）
 
 層ごとに GPU を分けるパイプライン分割です。検証機の 5 枚の GPU はすべて PCIe x1 で、ホスト経由の転送は約 0.40 GB/s です。層ごとに分ければ GPU 間を流れるのは活性化だけで、隠れ層 4096 の FP32 なら 1 トークン・1 区間あたり 16KB、約 40µs で済みます。合計 VRAM は約 10GB あるので、1 枚には載らない 8B 級のモデルを全層 GPU で動かせる見込みがあります。
 
-制約と未決:
+2026-10-10 に C API と Core の転送が入りました。
 
-- NVIDIA 390 では、1 プロセスで 2 枚目の GPU を開くと失敗する事例がある（pyopencl で確認、C API では未検証）。プロセスを分けて共有メモリで受け渡す transport も視野に入れます。
-- NVIDIA の Vulkan ICD は使えない（クラッシュする）ため、NVIDIA は OpenCL、AMD は Vulkan または OpenCL という混在が前提になります。
-- 複数の device をまたぐ転送、2 本目以降の stream と event の形、PyTorch の PrivateUse1 で必要になる確保・解放のフックとの関係は [docs/API_CONTRACT.md](docs/API_CONTRACT.md) 11 章の未決事項です。
+- `scrapgpu_tensor_copy`（`include/scrapgpu/tensor.h`、`src/core/transport.cpp`）: 同じ dtype / 形の連続なテンソルを任意の 2 つの device 間でコピー。同じ device は device 内コピー 1 回、異なる device / バックエンドはホストのステージングバッファ経由（src_stream で blocking read、dst_stream で write。OpenCL 1.1 に cross-context event はない）。順序は「src_stream の先行仕事の後、dst_stream の後続仕事の前」を保証（[docs/API_CONTRACT.md](docs/API_CONTRACT.md) 14 章）。R32 は理由付き UNSUPPORTED。ABI 0.4（backend vtable 末尾に `stream_device` を追加）。
+- `examples/pipeline_mlp.c`: L 層の MLP（y = silu(W1 x) * (W3 x)、out = W2 y、残差加算、RMS_NORM。Q4_0 R32 重み）を、backend が報告する全 device に round-robin で、または `SCRAPGPU_PIPELINE_SPLIT=a,b,...` の層数指定で割り付ける。活性化は `scrapgpu_tensor_copy` で移し、結果を `scrapgpu_ref_execute` との NMSE で検証、1 device と全 device の per-token 時間を出力する。1 枚の GPU でもそのまま動く。
+- `tests/ops`: `scrapgpu_tensor_copy` のテスト。同じ device では先行して投入した op の結果を byte 単位で比較し（順序の保証も見る）、2 つ目の device があれば device 間で両方向を比較する（なければ SKIP）。
+
+残る項目:
+
+- TB250 の実機（2 Kepler + 2 AMD、1 プロセス）での動作確認と速度の測定（PCIe x1 で活性化 16KB / 層境界あたり約 40µsに対するオーバーヘッド）。NVIDIA 390 の「1 プロセスで 2 枚目の GPU を開けない」は Fermi + Kepler の組合せで発生し、Kepler 同士と NVIDIA + AMD は 1 プロセスで動くことを C API で確認済み（[docs/HARDWARE.md](docs/HARDWARE.md)）。
+- プロセスを分けて共有メモリで受け渡す transport（Fermi を含む構成用）。
+- 転送専用の 2 本目の stream と event、PyTorch の PrivateUse1 で必要になる確保・解放のフックとの関係（[docs/API_CONTRACT.md](docs/API_CONTRACT.md) 11 章の未決事項）。
+
+**実施状況（2026-10-10）**：1 プロセスで GT 730・GT 710・RX 6400・WX 2100 の 4 枚を使えることを確認し（Fermi と Kepler は同じプロセスで使えない）、Qwen3-8B Q4_K_M を全層 GPU で動かした（CL11 4 枚で生成 4.63 t/s、CPU だけの約 13 倍）。C API に GPU 間の転送（`scrapgpu_tensor_copy`）とパイプライン分割の例を加え、実機で一致を確認した。結果と次の課題は [docs/MULTI_GPU.md](docs/MULTI_GPU.md)。
 
 ## P5 バックエンドと adapter の追加 — 未着手
 
@@ -73,6 +81,8 @@ ggml を使わずに C API だけでテンソル演算を GPU で実行できる
 | adapters/ONNX Runtime | プラグイン EP のテンプレート（MIT）を使い、EP から C API を呼ぶ薄い層にする（ORT 1.24 以上） |
 
 adapter ごとに試験を定めます。リポジトリへの取り込み可否と条件は [docs/REUSE.md](docs/REUSE.md) のとおりです。
+
+**実施状況（2026-10-10）**：Vulkan バックエンドの最初の段階（`src/backends/vulkan`、AMD の RADV で加算・乗算・RMS_NORM・F32 / F16 / Q4_0 / Q8_0 の行列積、TB250 の RX 6400 と WX 2100 で全件通過）、PyTorch adapter の Stage A（`adapters/pytorch`、`torch.ops.scrapgpu.*`）、ONNX Runtime のプラグイン EP（`adapters/onnxruntime`、MatMul・Add・Mul）。CUDA は sudo でのドライバ切り替えが要るので対象外。opencl12 は未着手。
 
 ## 既知のリスクと未決
 
@@ -117,7 +127,7 @@ adapter ごとに試験を定めます。リポジトリへの取り込み可否
 
 **P3 (done, Gate 3 on 2026-10-10).** Tensor / ops / quant and a C API that works without ggml, in six steps S1-S6 (device runtime state, `cl11_tensor` and descriptors, the R32 packing, the ops and their support logic, the public API, then the CPU reference implementation, the per-op unit tests and a ggml-free example). S6 is independent of S1-S5 and can run in parallel. Gate 3: the Gate 2 TB250 regression plus the ggml-free tests and examples on the six TB250 configurations and on a Mac.
 
-**P4 (not started).** Multi-GPU transport as a pipeline split. All five GPUs of the test machine are on PCIe x1 with about 0.40 GB/s through the host; per-layer splitting moves only activations (about 16KB and 40µs per token and hop for a 4096-wide FP32 hidden layer), and the roughly 10GB of total VRAM could hold an 8B model on GPUs. Open: NVIDIA 390 failing to open a second GPU in one process (seen with pyopencl, not verified through the C API), shared-memory transport with one process per device, and the mixed NVIDIA-OpenCL / AMD-Vulkan setup the broken NVIDIA 390 Vulkan ICD forces.
+**P4 (transport in the C API done on 2026-10-10; runs on the multi-GPU test machine pending).** `scrapgpu_tensor_copy` moves a contiguous tensor of a matching dtype and shape between any two devices: one device-side copy on the same device, a blocking read plus a write through a host staging buffer across devices or backends (OpenCL 1.1 has no cross-context events), ordered after the work already enqueued on the source stream and before the work enqueued later on the destination stream; R32 tensors are rejected with a reason. ABI 0.4 adds `stream_device` at the end of the backend vtable for the same-device fast path. `examples/pipeline_mlp.c` splits an L-layer SwiGLU MLP (residual add and RMS_NORM, Q4_0 R32 weights) round-robin or by `SCRAPGPU_PIPELINE_SPLIT` counts over all reported devices, checks the result against `scrapgpu_ref_execute` (NMSE), and prints the time per token for one device vs all devices (it runs unchanged on a single GPU); `tests/ops` compares the copied bytes exactly, across devices when a second device exists. Open: running and timing it on the TB250 four-GPU machine (2 Kepler + 2 AMD in one process; the NVIDIA 390 second-GPU failure is confirmed through the C API to hit Fermi+Kepler pairs only, see docs/HARDWARE.md), the shared-memory transport with one process per device, and second streams / events.
 
 **P5 (not started).** opencl12 (shared kernels, CLBlast tuner, dlprimitives-style program cache), vulkan (ported mat-vec and dequant shaders on volk / vk-bootstrap / VMA, AMD only because the NVIDIA 390 Vulkan ICD crashes), cuda (reference only, lowest priority), and the PyTorch (custom ops first, then PrivateUse1) and ONNX Runtime (plugin EP, ORT 1.24+) adapters. What may be taken in is decided by [docs/REUSE.md](docs/REUSE.md).
 

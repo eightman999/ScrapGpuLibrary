@@ -4,3 +4,5 @@ _w/
 .DS_Store
 sweep-out/
 sweep-bin/
+adapters/pytorch/scrapgpu_torch/_C*.so
+__pycache__/

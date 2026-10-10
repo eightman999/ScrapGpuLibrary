@@ -3,7 +3,10 @@ project(ScrapGpuLibrary C CXX)
 
 option(SCRAPGPU_BUILD_CORE "Build the ScrapGpu core library without ggml or OpenCL" ON)
 option(SCRAPGPU_BUILD_OPENCL11 "Build the OpenCL 1.1 backend (Phase 2)" OFF)
+option(SCRAPGPU_BUILD_VULKAN "Build the Vulkan backend (compute, Vulkan 1.2 + 16-bit storage)" OFF)
 option(SCRAPGPU_BUILD_GGML_ADAPTER "Build the existing ggml CL11 adapter" OFF)
+option(SCRAPGPU_BUILD_PYTORCH "Build the PyTorch adapter (Stage A custom ops)" OFF)
+option(SCRAPGPU_BUILD_ORT_EP "Build the ONNX Runtime plugin execution provider" OFF)
 option(SCRAPGPU_BUILD_TESTS "Build ScrapGpu contract tests" ON)
 option(SCRAPGPU_BUILD_EXAMPLES "Build the examples (needs SCRAPGPU_BUILD_OPENCL11)" ${SCRAPGPU_BUILD_OPENCL11})
 
@@ -29,7 +32,8 @@ if (SCRAPGPU_BUILD_CORE)
         src/core/ref/quant.cpp
         src/core/registry.cpp
         src/core/status.cpp
-        src/core/tensor.cpp)
+        src/core/tensor.cpp
+        src/core/transport.cpp)
     target_include_directories(scrapgpu_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
     target_link_libraries(scrapgpu_core PRIVATE scrapgpu_tensor)
     target_compile_features(scrapgpu_core PUBLIC cxx_std_17)
@@ -77,8 +81,45 @@ if (SCRAPGPU_BUILD_OPENCL11)
     set_target_properties(scrapgpu_opencl11_api PROPERTIES CXX_VISIBILITY_PRESET hidden)
 endif()
 
+if (SCRAPGPU_BUILD_VULKAN)
+    include(${CMAKE_CURRENT_SOURCE_DIR}/src/backends/vulkan/vulkan_shaders.cmake)
+    # volk loads libvulkan at run time; without a loader registration succeeds with 0 devices
+    add_library(scrapgpu_vulkan STATIC
+        src/backends/vulkan/api.cpp
+        src/backends/vulkan/vk.cpp
+        third_party/volk/volk.c)
+    target_include_directories(scrapgpu_vulkan PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src"
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/Vulkan-Headers/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/volk")
+    target_link_libraries(scrapgpu_vulkan PUBLIC scrapgpu_core scrapgpu_tensor ${CMAKE_DL_LIBS})
+    target_compile_features(scrapgpu_vulkan PUBLIC cxx_std_17)
+    set_target_properties(scrapgpu_vulkan PROPERTIES
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON
+        POSITION_INDEPENDENT_CODE ON)
+    # compiles shaders/*.comp to SPIR-V with glslc and generates vk-shaders.h; without glslc the
+    # backend still builds and reports "shaders not built" from op_supported
+    scrapgpu_vulkan_embed_shaders(scrapgpu_vulkan
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/backends/vulkan"
+        "${CMAKE_CURRENT_BINARY_DIR}/vulkan")
+
+    add_library(scrapgpu_vulkan_api INTERFACE)
+    target_link_libraries(scrapgpu_vulkan_api INTERFACE scrapgpu_vulkan)
+endif()
+
 if (SCRAPGPU_BUILD_GGML_ADAPTER)
     add_subdirectory(adapters/ggml)
+endif()
+
+if (SCRAPGPU_BUILD_PYTORCH)
+    if (NOT SCRAPGPU_BUILD_OPENCL11)
+        message(FATAL_ERROR "SCRAPGPU_BUILD_PYTORCH requires SCRAPGPU_BUILD_OPENCL11=ON")
+    endif ()
+    add_subdirectory(adapters/pytorch)
+endif ()
+if (SCRAPGPU_BUILD_ORT_EP)
+    add_subdirectory(adapters/onnxruntime)
 endif()
 
 if (SCRAPGPU_BUILD_TESTS AND SCRAPGPU_BUILD_CORE)
@@ -115,12 +156,21 @@ if (SCRAPGPU_BUILD_TESTS AND SCRAPGPU_BUILD_CORE)
     target_link_libraries(scrapgpu_ref_quant_tests PRIVATE scrapgpu_core)
     add_test(NAME scrapgpu_ref_quant_tests COMMAND scrapgpu_ref_quant_tests)
 
-    # GPU tests of the ops through the public C API only (SKIPPED when no OpenCL device exists)
-    if (SCRAPGPU_BUILD_OPENCL11)
+    # GPU tests of the ops through the public C API only (SKIPPED when no device exists)
+    if (SCRAPGPU_BUILD_OPENCL11 OR SCRAPGPU_BUILD_VULKAN)
         add_executable(scrapgpu_ops_tests tests/ops/ops_tests.cpp)
-        target_link_libraries(scrapgpu_ops_tests PRIVATE scrapgpu_opencl11_api)
-        add_test(NAME scrapgpu_ops_tests COMMAND scrapgpu_ops_tests)
-        set_tests_properties(scrapgpu_ops_tests PROPERTIES SKIP_RETURN_CODE 77)
+        if (SCRAPGPU_BUILD_OPENCL11)
+            target_link_libraries(scrapgpu_ops_tests PRIVATE scrapgpu_opencl11_api)
+            target_compile_definitions(scrapgpu_ops_tests PRIVATE SCRAPGPU_OPS_TEST_WITH_OPENCL11)
+            add_test(NAME scrapgpu_ops_tests COMMAND scrapgpu_ops_tests)
+            set_tests_properties(scrapgpu_ops_tests PROPERTIES ENVIRONMENT "SCRAPGPU_TEST_BACKEND=opencl11" SKIP_RETURN_CODE 77)
+        endif()
+        if (SCRAPGPU_BUILD_VULKAN)
+            target_link_libraries(scrapgpu_ops_tests PRIVATE scrapgpu_vulkan_api)
+            target_compile_definitions(scrapgpu_ops_tests PRIVATE SCRAPGPU_OPS_TEST_WITH_VULKAN)
+            add_test(NAME scrapgpu_ops_tests_vulkan COMMAND scrapgpu_ops_tests)
+            set_tests_properties(scrapgpu_ops_tests_vulkan PROPERTIES ENVIRONMENT "SCRAPGPU_TEST_BACKEND=vulkan" SKIP_RETURN_CODE 77)
+        endif()
     endif()
 
     add_test(NAME scrapgpu_dependency_check
@@ -134,4 +184,8 @@ if (SCRAPGPU_BUILD_EXAMPLES)
     add_executable(scrapgpu_standalone_matmul examples/standalone_matmul.c)
     target_link_libraries(scrapgpu_standalone_matmul PRIVATE scrapgpu_opencl11_api)
     set_target_properties(scrapgpu_standalone_matmul PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED ON)
+
+    add_executable(scrapgpu_pipeline_mlp examples/pipeline_mlp.c)
+    target_link_libraries(scrapgpu_pipeline_mlp PRIVATE scrapgpu_opencl11_api)
+    set_target_properties(scrapgpu_pipeline_mlp PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED ON)
 endif()
