@@ -86,6 +86,7 @@ struct vk_str {
     VkCommandBuffer cmd = VK_NULL_HANDLE;
     bool recording = false;
     std::vector<VkFence> fences;      // in-flight submissions, oldest first
+    std::vector<VkCommandBuffer> pending; // submitted command buffers, freed on stream_sync (never reset while in flight)
     std::vector<VkDescriptorSet> sets; // allocated sets, freed on stream_sync
     vk_staging staging;
 };

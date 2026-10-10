@@ -519,14 +519,17 @@ VkResult vk_record(vk_dev * d, vk_str * s) {
         if (r != VK_SUCCESS) {
             return r;
         }
-    } else {
-        vkResetCommandBuffer(s->cmd, 0);
     }
     VkCommandBufferBeginInfo bi = {};
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     const VkResult r = vkBeginCommandBuffer(s->cmd, &bi);
     s->recording = r == VK_SUCCESS;
+    if (s->recording) {
+        // the first commands of a submission wait for the work of the earlier submissions on the queue (the other
+        // streams of the device included): submission order alone does not order the execution in Vulkan
+        vk_barrier(d, s);
+    }
     return r;
 }
 
@@ -555,6 +558,9 @@ VkResult vk_submit(vk_dev * d, vk_str * s) {
         return r;
     }
     s->fences.push_back(fence);
+    // the submitted command buffer may still execute: keep it until stream_sync and record the next work into a new one
+    s->pending.push_back(s->cmd);
+    s->cmd = VK_NULL_HANDLE;
     s->recording = false;
     return VK_SUCCESS;
 }
@@ -571,6 +577,10 @@ VkResult vk_stream_sync(vk_dev * d, vk_str * s) {
             vkDestroyFence(d->dev, f, nullptr);
         }
         s->fences.clear();
+    }
+    if (!s->pending.empty()) {
+        vkFreeCommandBuffers(d->dev, d->pool, (uint32_t) s->pending.size(), s->pending.data());
+        s->pending.clear();
     }
     for (VkDescriptorSet set : s->sets) {
         vkFreeDescriptorSets(d->dev, d->ds_pool, 1, &set);
@@ -591,12 +601,14 @@ void vk_stream_free(vk_dev * d, vk_str * s) {
 
 void vk_barrier(vk_dev * d, vk_str * s) {
     (void) d;
+    // a full memory dependency: every command recorded or submitted earlier on this queue (any stream) before every
+    // later command, and device writes visible to the host after the fence (the staging reads of downloads)
     VkMemoryBarrier mb = {};
     mb.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
     mb.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
-    mb.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+    mb.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_READ_BIT;
     vkCmdPipelineBarrier(s->cmd,
-                         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0,
+                         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, 0,
                          1, &mb, 0, nullptr, 0, nullptr);
 }
 

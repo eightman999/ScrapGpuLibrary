@@ -984,14 +984,17 @@ scrapgpu_status api_buffer_fill(vk_api_stream * s, scrapgpu_buffer_t * buffer, u
     if (lead != 0) {
         VkBufferCopy region = { 0, (VkDeviceSize) offset, (VkDeviceSize) lead };
         vkCmdCopyBuffer(s->str.cmd, s->str.staging.buf, b->buf.buf, 1, &region);
+        sgv::vk_barrier(&s->dev->dev, &s->str);
         s->str.staging.in_flight = true;
     }
     if (mid != 0) {
         vkCmdFillBuffer(s->str.cmd, b->buf.buf, (VkDeviceSize) offset + lead, (VkDeviceSize) mid, pattern);
+        sgv::vk_barrier(&s->dev->dev, &s->str);
     }
     if (tail != 0) {
         VkBufferCopy region = { (VkDeviceSize) lead, (VkDeviceSize) offset + lead + mid, (VkDeviceSize) tail };
         vkCmdCopyBuffer(s->str.cmd, s->str.staging.buf, b->buf.buf, 1, &region);
+        sgv::vk_barrier(&s->dev->dev, &s->str);
         s->str.staging.in_flight = true;
     }
     sgv::vk_barrier(&d->dev, &s->str);
@@ -1255,6 +1258,10 @@ const scrapgpu_backend_vtable g_vk_vtable = {
     /* .tensor_upload      = */ api_tensor_upload,
     /* .tensor_download    = */ api_tensor_download,
     /* .op_execute         = */ api_op_execute,
+    /* .stream_device      = */ [](scrapgpu_stream_t * s) -> scrapgpu_device_t * {
+        vk_api_stream * st = api_stream(s);
+        return st == nullptr ? nullptr : reinterpret_cast<scrapgpu_device_t *>(st->dev);
+    },
 };
 
 } // namespace

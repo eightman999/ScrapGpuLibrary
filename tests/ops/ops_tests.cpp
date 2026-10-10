@@ -1077,7 +1077,17 @@ void test_tensor_copy() {
         CHECK_OK(scrapgpu_tensor_copy(g_stream, &sum.gdesc, s2, &cpy.gdesc));
         CHECK_OK(scrapgpu_tensor_download(s2, &cpy.gdesc, cpy.host.data(), cpy.host.size()));
         tdownload(sum);
-        CHECK(std::memcmp(cpy.host.data(), sum.host.data(), cpy.host.size()) == 0);
+        if (std::memcmp(cpy.host.data(), sum.host.data(), cpy.host.size()) != 0) {
+            const float * a = reinterpret_cast<const float *>(cpy.host.data());
+            const float * b = reinterpret_cast<const float *>(sum.host.data());
+            size_t i = 0;
+            while (i < cpy.host.size() / 4 && std::memcmp(&a[i], &b[i], 4) == 0) {
+                ++i;
+            }
+            std::printf("FAIL  %-24s first difference at element %zu of %zu: copy %g, source %g\n", "tensor_copy same dev", i,
+                        cpy.host.size() / 4, a[i], b[i]);
+            std::exit(1);
+        }
         std::printf("PASS  %-24s F32 after an enqueued ADD, 2 streams, exact bytes\n", "tensor_copy same dev");
         ++g_run;
         CHECK_OK(scrapgpu_stream_free(s2));
