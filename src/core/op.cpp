@@ -3,6 +3,8 @@
 #include "scrapgpu/backend.h"
 
 #include <cstddef>
+#include <cstring>
+#include <type_traits>
 
 namespace {
 bool is_f32(const scrapgpu_tensor_desc & t) {
@@ -17,6 +19,7 @@ bool is_quant_or_float_weight(const scrapgpu_tensor_desc & t) {
     switch (t.dtype) {
         case SCRAPGPU_DTYPE_F32:
         case SCRAPGPU_DTYPE_F16:
+        case SCRAPGPU_DTYPE_BF16:
         case SCRAPGPU_DTYPE_Q4_0:
         case SCRAPGPU_DTYPE_Q8_0:
         case SCRAPGPU_DTYPE_Q4_K:
@@ -79,6 +82,25 @@ scrapgpu_status scrapgpu_op_desc_validate(const scrapgpu_op_desc * desc) {
     }
     if (desc->params_size > kMaxOpParams) {
         return invalid("op desc params_size is too large");
+    }
+    // Backends and the dtype checks below require a complete tensor descriptor.
+    // Read only struct_size until this is established (including metadata ops).
+    for (size_t i = 0; i < desc->input_count; ++i) {
+        if (desc->inputs[i].struct_size < sizeof(scrapgpu_tensor_desc)) {
+            return invalid("input tensor descriptor is too small");
+        }
+    }
+    for (size_t i = 0; i < desc->output_count; ++i) {
+        if (desc->outputs[i].struct_size < sizeof(scrapgpu_tensor_desc)) {
+            return invalid("output tensor descriptor is too small");
+        }
+    }
+    // A C caller can supply any integer. Reject values outside the enum's
+    // supported range before a C++ enum load (which would itself be undefined).
+    std::underlying_type<scrapgpu_op>::type op_id;
+    std::memcpy(&op_id, &desc->op, sizeof(op_id));
+    if (op_id > SCRAPGPU_OP_CONT_MUL_MAT) {
+        return invalid("unknown operation");
     }
     switch (desc->op) {
         case SCRAPGPU_OP_NONE:
@@ -149,7 +171,9 @@ scrapgpu_status scrapgpu_op_desc_validate(const scrapgpu_op_desc * desc) {
         case SCRAPGPU_OP_CONT:
             if (desc->op == SCRAPGPU_OP_CPY && !has_params(desc, sizeof(scrapgpu_cpy_params))) return invalid("CPY params are missing");
             if (validate_counts(desc, 1, 1) != SCRAPGPU_STATUS_OK) return SCRAPGPU_STATUS_INVALID_ARGUMENT;
-            return is_f16_or_f32(desc->inputs[0]) && is_f16_or_f32(desc->outputs[0]) ? SCRAPGPU_STATUS_OK : invalid("copy op supports F16/F32 only");
+            return (is_f16_or_f32(desc->inputs[0]) || desc->inputs[0].dtype == SCRAPGPU_DTYPE_BF16) &&
+                   (is_f16_or_f32(desc->outputs[0]) || desc->outputs[0].dtype == SCRAPGPU_DTYPE_BF16)
+                ? SCRAPGPU_STATUS_OK : invalid("copy op supports F16/BF16/F32 only");
         case SCRAPGPU_OP_MUL_MAT:
             if (!has_params(desc, sizeof(scrapgpu_mul_mat_params))) return invalid("MUL_MAT params are missing");
             if (validate_counts(desc, 2, 1) != SCRAPGPU_STATUS_OK) return SCRAPGPU_STATUS_INVALID_ARGUMENT;

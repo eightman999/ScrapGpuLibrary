@@ -51,6 +51,10 @@ enum cl11_amd_gen {
 
 cl11_amd_gen cl11_amd_generation(const cl11_device_info & info);
 
+// Known driver/device combinations that must not create a compute context.
+// Returns a static reason, or nullptr. Shared by the C API and ggml adapter.
+const char * cl11_device_rejection_reason(const cl11_device_info & info);
+
 enum cl11_rkind {
     CL11_RK_Q4_0,
     CL11_RK_Q8_0,

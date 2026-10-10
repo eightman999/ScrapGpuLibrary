@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Two-layer MLP: ScrapLinear (GPU via scrapgpu) vs nn.Linear on CPU."""
+"""Two-layer MLP: ScrapLinear (selected ScrapGpu backend) vs nn.Linear on CPU."""
 
 from __future__ import annotations
 
@@ -36,9 +36,10 @@ class ScrapMLP(nn.Module):
         return self.fc2(h)
 
 
+@torch.no_grad()
 def main() -> int:
     if not sgt.has_device():
-        print("No OpenCL device; nothing to run.")
+        print("No selected ScrapGpu device; nothing to run.")
         return 0
 
     sgt.load()

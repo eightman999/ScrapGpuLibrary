@@ -33,6 +33,25 @@ inline float ld_f16(const uint8_t * p) {
     return half_to_float(load_u16(p));
 }
 
+inline float ld_bf16(const uint8_t * p) {
+    const uint32_t bits = static_cast<uint32_t>(load_u16(p)) << 16;
+    float value;
+    std::memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
+inline void st_bf16(uint8_t * p, float value) {
+    uint32_t bits;
+    std::memcpy(&bits, &value, sizeof(bits));
+    // Keep NaNs as NaNs (including payloads confined to the discarded bits).
+    if ((bits & 0x7fffffffu) > 0x7f800000u) {
+        store_u16(p, static_cast<uint16_t>((bits >> 16) | 0x0040u));
+    } else {
+        bits += 0x7fffu + ((bits >> 16) & 1u); // round to nearest, ties to even
+        store_u16(p, static_cast<uint16_t>(bits >> 16));
+    }
+}
+
 inline int32_t ld_i32(const uint8_t * p) {
     int32_t v = 0;
     std::memcpy(&v, p, sizeof(v));
@@ -65,6 +84,9 @@ bool load_float(scrapgpu_dtype dtype, const uint8_t * p, float * out) {
         case SCRAPGPU_DTYPE_F16:
             *out = ld_f16(p);
             return true;
+        case SCRAPGPU_DTYPE_BF16:
+            *out = ld_bf16(p);
+            return true;
         default:
             return false;
     }
@@ -77,6 +99,9 @@ bool store_float(scrapgpu_dtype dtype, uint8_t * p, float v) {
             return true;
         case SCRAPGPU_DTYPE_F16:
             st_f16(p, v);
+            return true;
+        case SCRAPGPU_DTYPE_BF16:
+            st_bf16(p, v);
             return true;
         default:
             return false;
@@ -737,9 +762,9 @@ scrapgpu_status exec_set_rows(const RTensor & s0, const RTensor & ids, const WTe
 }
 
 scrapgpu_status exec_cpy(const RTensor & s, const WTensor & d) {
-    if ((s.dtype() != SCRAPGPU_DTYPE_F32 && s.dtype() != SCRAPGPU_DTYPE_F16) ||
-        (d.dtype() != SCRAPGPU_DTYPE_F32 && d.dtype() != SCRAPGPU_DTYPE_F16)) {
-        return ref_unsupported("CPY/DUP/CONT support F32 and F16 only");
+    if ((s.dtype() != SCRAPGPU_DTYPE_F32 && s.dtype() != SCRAPGPU_DTYPE_F16 && s.dtype() != SCRAPGPU_DTYPE_BF16) ||
+        (d.dtype() != SCRAPGPU_DTYPE_F32 && d.dtype() != SCRAPGPU_DTYPE_F16 && d.dtype() != SCRAPGPU_DTYPE_BF16)) {
+        return ref_unsupported("CPY/DUP/CONT support F32, F16 and BF16 only");
     }
     const int64_t sne[4] = {s.ne(0), s.ne(1), s.ne(2), s.ne(3)};
     const int64_t dne[4] = {d.ne(0), d.ne(1), d.ne(2), d.ne(3)};
@@ -867,7 +892,8 @@ scrapgpu_status exec_mul_mat(const RTensor & s0, const RTensor & s1, const WTens
     if (s1.dtype() != SCRAPGPU_DTYPE_F32 || d.dtype() != SCRAPGPU_DTYPE_F32) {
         return ref_unsupported("MUL_MAT expects an F32 src1 and destination");
     }
-    if (s0.dtype() != SCRAPGPU_DTYPE_F32 && s0.dtype() != SCRAPGPU_DTYPE_F16 && !dtype_is_quantized(s0.dtype())) {
+    if (s0.dtype() != SCRAPGPU_DTYPE_F32 && s0.dtype() != SCRAPGPU_DTYPE_F16 &&
+        s0.dtype() != SCRAPGPU_DTYPE_BF16 && !dtype_is_quantized(s0.dtype())) {
         return ref_unsupported("MUL_MAT dtype is not implemented");
     }
     const scrapgpu_status st = require_contiguous_rows(s0, "MUL_MAT needs contiguous rows of src0 (nb0 == element size)");
