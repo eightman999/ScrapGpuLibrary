@@ -1,0 +1,2 @@
+dtype,k,m,n,iterations,min_ms,median_ms,mean_ms,gflops,checksum,weights_bytes
+Q4_K,14336,512,16,7,113.146085,113.273268,113.355694,2.073579,-135.013203,4128768

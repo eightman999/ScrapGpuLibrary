@@ -45,6 +45,8 @@ cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
 
+旧式 CPU と RAM 向けに、CPU 参照実装の行列演算を小さな panel と SSE2 で高速化しています。`-DSCRAPGPU_BUILD_BENCHMARKS=ON` で比較用 benchmark をビルドできます。6f / TB250 の実測と再現手順は [CPU と RAM の最適化](docs/CPU_RAM_OPTIMIZATION.md) を参照してください。
+
 **2. OpenCL 1.1 バックエンドと独立 C API のサンプルを試す**
 
 OpenCL ヘッダー、ICD ローダー、対象 GPU に対応する OpenCL 実装が別途必要です。
@@ -91,6 +93,7 @@ ctest --test-dir build
 | `SCRAPGPU_BUILD_GGML_ADAPTER` | `OFF` | ggml adapter。`ON` で `adapters/ggml` を追加します |
 | `SCRAPGPU_BUILD_EXAMPLES` | OPENCL11 と同じ | ggml なしの C API サンプル。OpenCL11 が必要 |
 | `SCRAPGPU_BUILD_TESTS` | `ON` | 契約テストと依存の検査 |
+| `SCRAPGPU_BUILD_BENCHMARKS` | `OFF` | CPU 参照行列演算と CL11 のホスト側記述子準備の benchmark。CORE が必要 |
 
 - `ctest` は、契約テストと、`src/core` と公開ヘッダーに ggml・OpenCL の include がなく、`src/backends/opencl11` に ggml の include がないことを確かめる検査（`cmake/check_core_dependencies.cmake`）を実行します。
 - ggml adapter は llama.cpp b11384 向けです。ツリー外プラグインとツリー内パッチの両方のビルド方法は [adapters/ggml/](adapters/ggml/) を参照してください。

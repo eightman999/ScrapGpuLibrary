@@ -1,0 +1,27 @@
+[  4%] Built target scrapgpu_tensor
+[  6%] Building CXX object CMakeFiles/scrapgpu_core.dir/src/core/ref/ops.cpp.o
+[ 30%] Built target scrapgpu_opencl11
+[ 34%] Built target scrapgpu_tensor_tests
+[ 39%] Built target scrapgpu_r32_tests
+[ 43%] Built target ggml-cl11
+[ 45%] Linking CXX static library libscrapgpu_core.a
+[ 60%] Built target scrapgpu_core
+[ 63%] Building CXX object CMakeFiles/scrapgpu_descriptor_bench.dir/tools/descriptor_bench.cpp.o
+[ 65%] Linking CXX executable scrapgpu_cpu_bench
+[ 67%] Built target scrapgpu_cpu_bench
+[ 71%] Built target scrapgpu_opencl11_api
+[ 73%] Linking CXX executable scrapgpu_core_contract_tests
+[ 76%] Built target scrapgpu_core_contract_tests
+[ 78%] Linking CXX executable scrapgpu_public_headers_c
+[ 80%] Built target scrapgpu_public_headers_c
+[ 82%] Linking CXX executable scrapgpu_public_headers_cpp
+[ 84%] Linking CXX executable scrapgpu_descriptor_bench
+[ 86%] Built target scrapgpu_public_headers_cpp
+[ 89%] Building CXX object CMakeFiles/scrapgpu_ref_ops_tests.dir/tests/ref/ref_ops_tests.cpp.o
+[ 89%] Built target scrapgpu_descriptor_bench
+[ 91%] Linking CXX executable scrapgpu_ref_quant_tests
+[ 93%] Built target scrapgpu_ref_quant_tests
+[ 95%] Linking CXX executable scrapgpu_ops_tests
+[ 97%] Built target scrapgpu_ops_tests
+[100%] Linking CXX executable scrapgpu_ref_ops_tests
+[100%] Built target scrapgpu_ref_ops_tests

@@ -268,8 +268,22 @@ inline void fastdiv_init(uint32_t d, uint32_t & m, uint32_t & l) {
     if (d == 0) {
         return;
     }
+    if (d == 1) {
+        m = 1;
+        return;
+    }
+#if defined(__GNUC__) || defined(__clang__)
+    // The launch descriptors repeatedly use the same small/power-of-two
+    // dimensions. ceil(log2(d)) needs no loop or newer x86 instruction set.
+    l = 32u - static_cast<uint32_t>(__builtin_clz(d - 1));
+#else
     while (l < 32 && ((uint64_t) 1 << l) < d) {
         ++l;
+    }
+#endif
+    if ((d & (d - 1)) == 0) {
+        m = 1;
+        return;
     }
     m = (uint32_t) ((((uint64_t) 1 << 32) * (((uint64_t) 1 << l) - d)) / d + 1);
 }

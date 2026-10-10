@@ -1,0 +1,3 @@
+load_backend: loaded CPU backend from /home/eightman/bench/scrapgpu/llama.cpp/build-dl/bin/libggml-cpu.so
+load_backend: loaded CL11 backend from /home/eightman/dev/tools/ScrapGpuLibrary-opt-20261011/opt/build/adapters/ggml/libggml-cl11.so
+cl11_ensure_program: CL11_0: AMD Radeon Pro WX 2100 (radeonsi, polaris12, ACO, DRM 3.61, 6.12.107+deb13-amd64), OpenCL 1.1 Mesa 25.0.7-2+deb13u1, kernels built (work-group sizes: element-wise 128, row 128, mat-vec 128, mat-mat 16x16)

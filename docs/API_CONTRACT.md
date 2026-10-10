@@ -89,7 +89,7 @@ ROPE と SOFT_MAX の任意入力は、`desc->inputs[]` の固定順で渡す。
 ## 10. CPU フォールバックと参照実装
 
 - Core は「この op はこの device で実行できない」と理由つきで返すだけで、勝手に CPU で計算しない。
-- 単体テストと standalone API のために、CPU の参照実装（F32、量子化の逆変換は ggml の `ggml-quants.c` から移植）を Core に持つ。性能は求めない。
+- 単体テストと standalone API のために、CPU の参照実装（F32、量子化の逆変換は ggml の `ggml-quants.c` から移植）を Core に持つ。旧式 CPU 向けの `MUL_MAT` は、K 方向の加算順を維持した小さな panel と SSE2 / portable 経路で高速化する（[CPU_RAM_OPTIMIZATION.md](CPU_RAM_OPTIMIZATION.md)）。自動 CPU fallback の追加は意味しない。
 
 ## 11. 未決事項
 

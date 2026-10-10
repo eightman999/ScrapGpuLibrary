@@ -9,6 +9,7 @@ option(SCRAPGPU_BUILD_GGML_ADAPTER "Build the existing ggml CL11 adapter" OFF)
 option(SCRAPGPU_BUILD_PYTORCH "Build the PyTorch adapter (Stage A custom ops)" OFF)
 option(SCRAPGPU_BUILD_ORT_EP "Build the ONNX Runtime plugin execution provider" OFF)
 option(SCRAPGPU_BUILD_TESTS "Build ScrapGpu contract tests" ON)
+option(SCRAPGPU_BUILD_BENCHMARKS "Build CPU reference benchmarks" OFF)
 option(SCRAPGPU_BUILD_EXAMPLES "Build the examples (needs SCRAPGPU_BUILD_OPENCL11)" ${SCRAPGPU_BUILD_OPENCL11})
 
 if (SCRAPGPU_BUILD_CORE OR SCRAPGPU_BUILD_OPENCL11)
@@ -41,6 +42,17 @@ if (SCRAPGPU_BUILD_CORE)
     set_target_properties(scrapgpu_core PROPERTIES
         CXX_VISIBILITY_PRESET hidden
         VISIBILITY_INLINES_HIDDEN ON)
+endif()
+
+if (SCRAPGPU_BUILD_BENCHMARKS)
+    if (NOT SCRAPGPU_BUILD_CORE)
+        message(FATAL_ERROR "SCRAPGPU_BUILD_BENCHMARKS requires SCRAPGPU_BUILD_CORE=ON")
+    endif()
+    add_executable(scrapgpu_cpu_bench tools/cpu_bench.cpp)
+    target_link_libraries(scrapgpu_cpu_bench PRIVATE scrapgpu_core)
+    add_executable(scrapgpu_descriptor_bench tools/descriptor_bench.cpp)
+    target_include_directories(scrapgpu_descriptor_bench PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(scrapgpu_descriptor_bench PRIVATE scrapgpu_core)
 endif()
 
 if (SCRAPGPU_BUILD_OPENCL11)

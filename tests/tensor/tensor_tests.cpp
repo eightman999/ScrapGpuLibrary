@@ -243,7 +243,25 @@ void test_fits_int32() {
     CHECK(!sgt::fits_int32(sparse));
 }
 
+void ref_fastdiv_init(uint32_t d, uint32_t & m, uint32_t & l);
+
 void test_fastdiv() {
+    // Preserve the exact magic-number ABI, including divisors outside the
+    // kernel's n < 2^31 range and the power-of-two shortcut.
+    uint32_t random_d = 12345;
+    for (int i = 0; i < 10000; ++i) {
+        random_d = random_d * 1664525u + 1013904223u;
+        uint32_t actual_m, actual_l, expected_m, expected_l;
+        sgt::fastdiv_init(random_d, actual_m, actual_l);
+        ref_fastdiv_init(random_d, expected_m, expected_l);
+        CHECK(actual_m == expected_m && actual_l == expected_l);
+    }
+    for (uint32_t d : {0u, 1u, 2u, 4u, 256u, 1024u, 1u << 31, UINT32_MAX}) {
+        uint32_t actual_m, actual_l, expected_m, expected_l;
+        sgt::fastdiv_init(d, actual_m, actual_l);
+        ref_fastdiv_init(d, expected_m, expected_l);
+        CHECK(actual_m == expected_m && actual_l == expected_l);
+    }
     // d = 0: no division
     uint32_t m = 1, l = 1;
     sgt::fastdiv_init(0, m, l);

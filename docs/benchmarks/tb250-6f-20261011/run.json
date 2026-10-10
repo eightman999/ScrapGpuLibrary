@@ -1,0 +1,64 @@
+{
+  "measured_on": "2026-10-11 Asia/Tokyo",
+  "baseline_commit": "83d82d8386507fccda6566a826afab26c8c1160d",
+  "candidate_state": "candidate working tree at measurement time; tested sources identified by SHA256",
+  "candidate_source_sha256": {
+    "src/core/ref/ops.cpp": "eb2fdcd0849db03ef63b5e34b131d8afc8998099f49697fe7b689c52f67ad3b9",
+    "src/tensor/tensor.h": "64620184f6c68f4c6dae9a1febf7ccafc89996ac31489a0061338b094588f7b8"
+  },
+  "source_hashes_match_local_tb250_and_6f": true,
+  "tb250_candidate_plugin_sha256": "1a1ae91956ba5ab612ccf761a74894aa4738c287572da0a930b5544fd51630b5",
+  "sixf_candidate_core_sha256": "b6095d1b06c83ed5ddf063df8d635b96a112ae904e03de4407574a46b96e14c7",
+  "llama_bench_sha256": "378cf6ec484bdb6d41c924c1960cb6b6736e17f14c39d168b12aac88995e3297",
+  "llama_build_commit_in_json": "unknown",
+  "llama_adapter_target": "b11384 (0faee50); the host source has no .git",
+  "models_sha256": {
+    "qwen3-0.6b-q8_0.gguf": "9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031",
+    "qwen3-0.6b-base-q4_k_m.gguf": "e1c597652808f9db19a554b3b98d2b0fe3a3c5b00920452bc2a809317b83ae5a"
+  },
+  "core_flags": "-O3 -DNDEBUG -fvisibility=hidden -fvisibility-inlines-hidden",
+  "tb250": {
+    "cpu": "Intel Celeron G3930",
+    "ram_bytes": 33587806208,
+    "compiler": "GCC 14.2.0",
+    "nvidia_driver": "390.157",
+    "mesa_driver": "25.0.7-2+deb13u1"
+  },
+  "sixf": {
+    "cpu": "Intel i5-3230M",
+    "ram_bytes": 16117338112,
+    "compiler": "GCC 15.2.0"
+  },
+  "cpu_benchmark": {
+    "k": 1024,
+    "m": 3072,
+    "n": [
+      1,
+      16
+    ],
+    "warmup": 2,
+    "iterations": 7,
+    "statistic": "median_ms",
+    "threads": 1
+  },
+  "gpu_benchmark": {
+    "prompt": 128,
+    "generation": 64,
+    "ubatch": 128,
+    "batch": 128,
+    "repetitions": 5,
+    "threads": 2,
+    "statistic": "mean tokens per second; stddev included",
+    "thermal_max_c": 85,
+    "thermal_resume_c": 78,
+    "per_run_temperature_recorded": false
+  },
+  "gpu_recheck": {
+    "target": "WX2100 rusticl / Base Q4_K_M",
+    "repetitions_each": 10,
+    "execution_order": ["candidate", "baseline"],
+    "reason": "large standard deviation in initial candidate tg64",
+    "candidate_tg64_delta_pct": 0.080036
+  },
+  "remote_run_root": "/home/eightman/dev/tools/ScrapGpuLibrary-opt-20261011"
+}

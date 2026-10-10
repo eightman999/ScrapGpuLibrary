@@ -1,0 +1,11 @@
+load_backend: loaded CPU backend from /home/eightman/bench/scrapgpu/llama.cpp/build-dl/bin/libggml-cpu.so
+load_backend: loaded CL11 backend from /home/eightman/dev/tools/ScrapGpuLibrary-opt-20261011/base/build/adapters/ggml/libggml-cl11.so
+cl11_build_program: CL11_0 build options mode 1: -cl-std=CL1.1 -DWG_EW=128 -DWG_ROW=128 -DWG_MV=128 -DGT=16 -DNRW=2 -DMMBN=4 -DWG_MVR_Q4_0=128 -DNRR_Q4_0=2 -DWG_MVR_Q8_0=128 -DNRR_Q8_0=2 -DWG_MVR_Q4_K=64 -DNRR_Q4_K=2 -DWG_MVR_Q6_K=64 -DNRR_Q6_K=2 -DLDG_Q4_0=0 -DLDG_Q8_0=0 -DLDG_Q4_K=1 -DLDG_Q6_K=1 -DDN_Q4_0=0 -DDN_Q8_0=0 -DDN_Q4_K=0 -DDN_Q6_K=0 -DATT_PL=4 -DWG_ATT=1024 -DSORT_NMAX=4096 -DCL11_NV_ASM  -DCL11_NV_LDG -DCL11_MMX -DMX_BM=64 -DMX_BN=64 -DMX_RM=8 -DMX_CN=4 -DMX_BK=16 -DMX_KU=16 -DMX_PF=0 -DMX_LDG=0 -DMX_REQD=1 -DCL11_NO_K
+cl11_ensure_program: CL11_0: multi mat-vec (Q / K / V, FFN gate / up in one launch) enabled
+cl11_ensure_program: CL11_0: mat-mat variant: tile 64 x 64, 8 x 4 values per work-item, BK 16, unroll 16, prefetch 0, 128 work-items
+cl11_ensure_program: CL11_0: GeForce GT 730, OpenCL 1.2 CUDA, kernels built (work-group sizes: element-wise 128, row 128, mat-vec 128, mat-mat 16x16)
+cl11 launches: nodes 1125, mul_mat 253 (max columns 8), kernels 617
+cl11 launches: nodes 1125, mul_mat 253 (max columns 8), kernels 617
+cl11 launches: nodes 1125, mul_mat 253 (max columns 1), kernels 452
+cl11 launches: nodes 1125, mul_mat 253 (max columns 1), kernels 452
+cl11 launches: nodes 1125, mul_mat 253 (max columns 1), kernels 452

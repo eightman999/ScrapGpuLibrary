@@ -11,6 +11,13 @@
 #include <limits>
 #include <vector>
 
+#if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+#include <emmintrin.h>
+#define SCRAPGPU_REF_SSE2 1
+#else
+#define SCRAPGPU_REF_SSE2 0
+#endif
+
 namespace scrapgpu {
 namespace ref {
 
@@ -760,6 +767,91 @@ scrapgpu_status exec_cpy(const RTensor & s, const WTensor & d) {
 // matmul
 // ---------------------------------------------------------------------------------------------
 
+// Small K-major panels expose independent output lanes to the compiler's SIMD
+// pass without reassociating the K reduction. Scratch space is O(K), never
+// O(K*M), including one row used to decode F16/quantized weights below.
+constexpr int64_t matmul_rows = 4;
+
+void load_matmul_panel(const RTensor & weights, int64_t m, int64_t i2, int64_t i3, float * panel) {
+    const uint8_t * rows[matmul_rows];
+    for (int64_t lane = 0; lane < matmul_rows; ++lane) {
+        rows[lane] = weights.ptr(0, m + lane, i2, i3);
+    }
+    for (int64_t k = 0; k < weights.ne(0); ++k) {
+        for (int64_t lane = 0; lane < matmul_rows; ++lane) {
+            panel[k * matmul_rows + lane] = ld_f32(rows[lane] + k * sizeof(float));
+        }
+    }
+}
+
+void mul_mat_panel(const float * panel, const uint8_t * column, int64_t k_count, float result[matmul_rows]) {
+    float a0 = 0.0f, a1 = 0.0f, a2 = 0.0f, a3 = 0.0f;
+    for (int64_t k = 0; k < k_count; ++k) {
+        const float b = ld_f32(column + k * sizeof(float));
+        a0 += panel[k * matmul_rows + 0] * b;
+        a1 += panel[k * matmul_rows + 1] * b;
+        a2 += panel[k * matmul_rows + 2] * b;
+        a3 += panel[k * matmul_rows + 3] * b;
+    }
+    result[0] = a0;
+    result[1] = a1;
+    result[2] = a2;
+    result[3] = a3;
+}
+
+// Prompt batches reuse a small activation panel across all weight rows. This
+// also avoids transposing decoded weight rows for single-column quantized
+// matvecs, where that additional memory traffic can outweigh SIMD savings.
+constexpr int64_t matmul_columns = 16;
+
+int64_t matmul_column_width(int64_t columns) {
+    return columns <= 4 ? 4 : columns <= 8 ? 8 : matmul_columns;
+}
+
+void load_matmul_columns(const RTensor & activations, int64_t n, int64_t columns,
+                        int64_t width, int64_t i2, int64_t i3, float * panel) {
+    const uint8_t * rows[matmul_columns];
+    for (int64_t lane = 0; lane < columns; ++lane) {
+        rows[lane] = activations.ptr(0, n + lane, i2, i3);
+    }
+    for (int64_t k = 0; k < activations.ne(0); ++k) {
+        for (int64_t lane = 0; lane < columns; ++lane) {
+            panel[k * width + lane] = ld_f32(rows[lane] + k * sizeof(float));
+        }
+        for (int64_t lane = columns; lane < width; ++lane) {
+            panel[k * width + lane] = 0.0f;
+        }
+    }
+}
+
+template <int Width>
+void mul_mat_columns(const float * row, const float * panel, int64_t k_count, float * result) {
+#if SCRAPGPU_REF_SSE2
+    // GCC does not consistently vectorize the portable accumulator loop.
+    // SSE2 is the x86-64 baseline and needs neither AVX nor FMA; each SIMD lane
+    // still accumulates in the original increasing-K order.
+    __m128 accum[Width / 4];
+    for (int group = 0; group < Width / 4; ++group) accum[group] = _mm_setzero_ps();
+    for (int64_t k = 0; k < k_count; ++k) {
+        const __m128 a = _mm_set1_ps(row[k]);
+        for (int group = 0; group < Width / 4; ++group) {
+            const __m128 b = _mm_loadu_ps(panel + k * Width + group * 4);
+            accum[group] = _mm_add_ps(accum[group], _mm_mul_ps(a, b));
+        }
+    }
+    for (int group = 0; group < Width / 4; ++group) _mm_storeu_ps(result + group * 4, accum[group]);
+#else
+    float accum[Width]{};
+    for (int64_t k = 0; k < k_count; ++k) {
+        const float a = row[k];
+        for (int lane = 0; lane < Width; ++lane) {
+            accum[lane] += a * panel[k * Width + lane];
+        }
+    }
+    std::memcpy(result, accum, sizeof(accum));
+#endif
+}
+
 scrapgpu_status exec_mul_mat(const RTensor & s0, const RTensor & s1, const WTensor & d, int allow_broadcast) {
     if (s1.dtype() != SCRAPGPU_DTYPE_F32 || d.dtype() != SCRAPGPU_DTYPE_F32) {
         return ref_unsupported("MUL_MAT expects an F32 src1 and destination");
@@ -787,11 +879,53 @@ scrapgpu_status exec_mul_mat(const RTensor & s0, const RTensor & s1, const WTens
         return ref_invalid("MUL_MAT: dst must be [ne01, ne11, ne12, ne13]");
     }
     std::vector<float> row;
+    std::vector<float> panel;
+    const int64_t column_width = matmul_column_width(std::min(s1.ne(1), matmul_columns));
+    // An oversized panel falls back to the original scalar path before count
+    // multiplication, including on platforms with a smaller size_t.
+    const uint64_t k_count = static_cast<uint64_t>(s0.ne(0));
+    const bool use_columns = s1.ne(1) >= 4 && k_count <= panel.max_size() / column_width;
+    const bool use_rows = s1.ne(1) < 4 && s0.dtype() == SCRAPGPU_DTYPE_F32 &&
+                          k_count <= panel.max_size() / matmul_rows;
+    const int64_t tiled_m = use_rows ? s0.ne(1) - s0.ne(1) % matmul_rows : 0;
+    const int64_t panel_width = use_columns ? column_width : tiled_m ? matmul_rows : 0;
+    if (panel_width) panel.resize(static_cast<size_t>(k_count) * static_cast<size_t>(panel_width));
     for (int64_t i13 = 0; i13 < s1.ne(3); ++i13) {
         const int64_t i03 = i13 / r3;
         for (int64_t i12 = 0; i12 < s1.ne(2); ++i12) {
             const int64_t i02 = i12 / r2;
-            for (int64_t m = 0; m < s0.ne(1); ++m) {
+            if (use_columns) {
+                for (int64_t n = 0; n < s1.ne(1); n += matmul_columns) {
+                    const int64_t columns = std::min(s1.ne(1) - n, matmul_columns);
+                    const int64_t width = matmul_column_width(columns);
+                    load_matmul_columns(s1, n, columns, width, i12, i13, panel.data());
+                    for (int64_t m = 0; m < s0.ne(1); ++m) {
+                        const scrapgpu_status st2 = load_row(s0, s0.ptr(0, m, i02, i03), s0.ne(0), &row);
+                        if (st2 != SCRAPGPU_STATUS_OK) return st2;
+                        float result[matmul_columns];
+                        switch (width) {
+                            case 4: mul_mat_columns<4>(row.data(), panel.data(), s0.ne(0), result); break;
+                            case 8: mul_mat_columns<8>(row.data(), panel.data(), s0.ne(0), result); break;
+                            default: mul_mat_columns<16>(row.data(), panel.data(), s0.ne(0), result); break;
+                        }
+                        for (int64_t lane = 0; lane < columns; ++lane) {
+                            st_f32(d.ptr(m, n + lane, i12, i13), result[lane]);
+                        }
+                    }
+                }
+                continue;
+            }
+            for (int64_t m = 0; m < tiled_m; m += matmul_rows) {
+                load_matmul_panel(s0, m, i02, i03, panel.data());
+                for (int64_t i11 = 0; i11 < s1.ne(1); ++i11) {
+                    float result[matmul_rows];
+                    mul_mat_panel(panel.data(), s1.ptr(0, i11, i12, i13), s0.ne(0), result);
+                    std::memcpy(d.ptr(m, i11, i12, i13), result, sizeof(result));
+                }
+            }
+            // Incomplete tiles keep the scalar path, avoiding reads or writes
+            // outside a row and extra packing work for very small matrices.
+            for (int64_t m = tiled_m; m < s0.ne(1); ++m) {
                 const scrapgpu_status st2 = load_row(s0, s0.ptr(0, m, i02, i03), s0.ne(0), &row);
                 if (st2 != SCRAPGPU_STATUS_OK) {
                     return st2;

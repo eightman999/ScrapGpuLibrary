@@ -1,0 +1,4 @@
+load_backend: loaded CPU backend from /home/eightman/bench/scrapgpu/llama.cpp/build-dl/bin/libggml-cpu.so
+load_backend: loaded CL11 backend from /home/eightman/dev/tools/ScrapGpuLibrary-opt-20261011/base/build/adapters/ggml/libggml-cl11.so
+cl11_ensure_program: rebuilding the kernels with smaller work-groups
+cl11_ensure_program: CL11_0: GeForce GT 430, OpenCL 1.1 CUDA, kernels built (work-group sizes: element-wise 128, row 128, mat-vec 128, mat-mat 16x16)

@@ -45,6 +45,8 @@ cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
 
+The CPU reference matrix operations use small panels and SSE2 to improve performance on older CPUs and reduce RAM traffic. Build the comparison benchmarks with `-DSCRAPGPU_BUILD_BENCHMARKS=ON`. See [CPU and RAM optimization](docs/CPU_RAM_OPTIMIZATION.md) (Japanese) for measurements on 6f / TB250 and reproduction commands.
+
 **2. Try the OpenCL 1.1 backend and standalone C API example**
 
 Install OpenCL headers, an ICD loader, and an OpenCL implementation for your device first.
@@ -92,6 +94,7 @@ ctest --test-dir build
 | `SCRAPGPU_BUILD_EXAMPLES` | OPENCL11 と同じ | ggml なしの C API サンプル。OpenCL11 が必要 |
 | `SCRAPGPU_BUILD_EXAMPLES` | Same as OPENCL11 | Standalone C API example; requires OpenCL11 |
 | `SCRAPGPU_BUILD_TESTS` | `ON` | The contract tests and the dependency check |
+| `SCRAPGPU_BUILD_BENCHMARKS` | `OFF` | CPU reference matmul and CL11 host descriptor preparation benchmarks; requires CORE |
 
 - `ctest` runs the contract tests and the check that `src/core` and the public headers include neither ggml nor OpenCL, and `src/backends/opencl11` includes no ggml (`cmake/check_core_dependencies.cmake`).
 - The ggml adapter is written for llama.cpp b11384. Both the out-of-tree plugin and the in-tree patch build are described in [adapters/ggml/](adapters/ggml/).

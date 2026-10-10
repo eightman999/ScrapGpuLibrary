@@ -1,0 +1,3 @@
+load_backend: loaded CPU backend from /home/eightman/bench/scrapgpu/llama.cpp/build-dl/bin/libggml-cpu.so
+load_backend: loaded CL11 backend from /home/eightman/dev/tools/ScrapGpuLibrary-opt-20261011/base/build/adapters/ggml/libggml-cl11.so
+error: invalid parameter for argument: -poll

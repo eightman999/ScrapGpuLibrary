@@ -1,0 +1,12 @@
+    4b3b:	0f 59 c5             	mulps  %xmm5,%xmm0
+    559f:	0f 59 d6             	mulps  %xmm6,%xmm2
+    55af:	0f 59 ce             	mulps  %xmm6,%xmm1
+    55b2:	0f 59 ee             	mulps  %xmm6,%xmm5
+    55b5:	0f 59 c6             	mulps  %xmm6,%xmm0
+    55ce:	0f 58 dc             	addps  %xmm4,%xmm3
+    55f8:	0f 58 dc             	addps  %xmm4,%xmm3
+    5635:	0f 58 dc             	addps  %xmm4,%xmm3
+    563b:	0f 58 da             	addps  %xmm2,%xmm3
+    56af:	0f 59 d4             	mulps  %xmm4,%xmm2
+    56bd:	0f 59 cc             	mulps  %xmm4,%xmm1
+    56c4:	0f 59 ec             	mulps  %xmm4,%xmm5

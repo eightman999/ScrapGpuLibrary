@@ -1,0 +1,21 @@
+Test project /home/eightman/dev/tools/ScrapGpuLibrary-opt-20261011/base/build
+    Start 1: scrapgpu_core_contract_tests
+1/8 Test #1: scrapgpu_core_contract_tests .....   Passed    0.00 sec
+    Start 2: scrapgpu_public_headers_c
+2/8 Test #2: scrapgpu_public_headers_c ........   Passed    0.00 sec
+    Start 3: scrapgpu_public_headers_cpp
+3/8 Test #3: scrapgpu_public_headers_cpp ......   Passed    0.00 sec
+    Start 4: scrapgpu_tensor_tests
+4/8 Test #4: scrapgpu_tensor_tests ............   Passed    0.00 sec
+    Start 5: scrapgpu_r32_tests
+5/8 Test #5: scrapgpu_r32_tests ...............   Passed    0.00 sec
+    Start 6: scrapgpu_ref_ops_tests
+6/8 Test #6: scrapgpu_ref_ops_tests ...........   Passed    0.00 sec
+    Start 7: scrapgpu_ref_quant_tests
+7/8 Test #7: scrapgpu_ref_quant_tests .........   Passed    0.00 sec
+    Start 8: scrapgpu_dependency_check
+8/8 Test #8: scrapgpu_dependency_check ........   Passed    0.01 sec
+
+100% tests passed, 0 tests failed out of 8
+
+Total Test time (real) =   0.05 sec

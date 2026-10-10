@@ -1,0 +1,3 @@
+gpu,model_dtype,task,baseline_ts,candidate_ts,delta_pct,baseline_stddev_ts,candidate_stddev_ts
+WX2100rusticl,base-q4_k_m,pp128,436.665788,436.449621,-0.04950399274239459,12.459518,9.735239
+WX2100rusticl,base-q4_k_m,tg64,15.264435,15.276652,0.08003571701147294,0.185548,0.162412

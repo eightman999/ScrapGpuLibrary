@@ -1,0 +1,1 @@
+Full upstream-baseline ggml run stopped at the large MUL_MAT_ID cases after 9 minutes; partial output preserved as gpu-ggml-tests.log. One known 1GiB allocation failure on the 981MiB GT730 was observed. Final-candidate C API and relevant-op tests run separately.

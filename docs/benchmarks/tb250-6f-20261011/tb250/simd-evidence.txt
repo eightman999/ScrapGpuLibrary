@@ -1,0 +1,12 @@
+    3a8a:	0f 59 c5             	mulps  %xmm5,%xmm0
+    44fd:	0f 59 de             	mulps  %xmm6,%xmm3
+    4504:	44 0f 59 ce          	mulps  %xmm6,%xmm9
+    4508:	0f 59 e6             	mulps  %xmm6,%xmm4
+    450b:	0f 59 ce             	mulps  %xmm6,%xmm1
+    4521:	41 0f 58 d0          	addps  %xmm8,%xmm2
+    4540:	41 0f 58 d0          	addps  %xmm8,%xmm2
+    455e:	41 0f 58 d0          	addps  %xmm8,%xmm2
+    4566:	0f 58 d3             	addps  %xmm3,%xmm2
+    4578:	0f 58 c3             	addps  %xmm3,%xmm0
+    4591:	0f 58 c3             	addps  %xmm3,%xmm0
+    45ab:	0f 58 c3             	addps  %xmm3,%xmm0

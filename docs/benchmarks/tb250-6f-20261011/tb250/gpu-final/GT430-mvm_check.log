@@ -1,0 +1,24 @@
+load_backend: loaded CL11 backend from /home/eightman/dev/tools/ScrapGpuLibrary-opt-20261011/opt/build/adapters/ggml/libggml-cl11.so
+load_backend: loaded CPU backend from /home/eightman/bench/scrapgpu/llama.cpp/build-dl/bin/libggml-cpu.so
+load_backend: loaded CL11 backend from /home/eightman/dev/tools/ScrapGpuLibrary-opt-20261011/opt/build/adapters/ggml/libggml-cl11.so
+cl11_ensure_program: rebuilding the kernels with smaller work-groups
+cl11_ensure_program: CL11_0: GeForce GT 430, OpenCL 1.1 CUDA, kernels built (work-group sizes: element-wise 128, row 128, mat-vec 128, mat-mat 16x16)
+q8_0 qkv 2048/1024/1024           : max err 5.47e-06 (max |y| 35) hash dacab45b9f0b0302 OK
+q8_0 gate/up 3072                 : max err 6.26e-06 (max |y| 33.2) hash b1cfd1f36d2346a3 OK
+q4_0 qkv                          : max err 4.11e-06 (max |y| 20.6) hash f74b6547e81291f3 OK
+q4_k qkv                          : max err 8.34e-06 (max |y| 27.7) hash 95d322436be42dcf OK
+q6_k qkv                          : max err 2.57e-06 (max |y| 23.4) hash 2c60ee1115829b9c OK
+q8_0 rows not x32 (1000,33,1)     : max err 2.3e-06 (max |y| 14.6) hash 3524d115b924a023 OK
+q4_0 rows not x32 (97,31,65)      : max err 3.9e-06 (max |y| 8.79) hash c35deba5b33dd014 OK
+q4_k rows not x32 (70,5)          : max err 5.77e-06 (max |y| 17.2) hash 911f3659ca6bf6e4 OK
+q6_k rows not x32 (33,200)        : max err 8.57e-06 (max |y| 13.8) hash acecdb264c9bb379 OK
+q8_0 two buffers                  : max err 2.99e-06 (max |y| 25.2) hash 1e12609f0c92e313 OK
+mixed q4_k/q6_k/q4_k (not fused)  : max err 5.62e-06 (max |y| 19.5) hash f0b7d7a3de53630a OK
+mixed q8_0/q4_0 (not fused)       : max err 2.14e-06 (max |y| 16.6) hash 327ac61cb789d1e1 OK
+q8_0 small rows (64)              : max err 1.03e-06 (max |y| 9.08) hash 60c8785bc0247699 OK
+total hash 0877b0917409529b
+set_rows x2 f16 emb 1024/1024 tokens 1/1 rows 512: max err 0.000122 OK
+set_rows x2 f16 emb 300/300 tokens 5/5 rows 64: max err 0.000122 OK
+set_rows x2 f16 emb 128/256 tokens 12/7 rows 100: max err 0.000122 OK
+set_rows x2 f32 emb 1024/1024 tokens 1/1 rows 512: max err 0 OK
+set_rows x2 f32 emb 64/64 tokens 33/33 rows 40: max err 0 OK

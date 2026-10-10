@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <vector>
 
 // CHECK stays active in Release builds (assert() is compiled out with NDEBUG)
@@ -625,6 +626,122 @@ void test_mul_mat() {
     }
 }
 
+void test_mul_mat_tiles() {
+    const scrapgpu_dtype types[] = {
+        SCRAPGPU_DTYPE_F32, SCRAPGPU_DTYPE_F16, SCRAPGPU_DTYPE_Q4_0,
+        SCRAPGPU_DTYPE_Q8_0, SCRAPGPU_DTYPE_Q4_K, SCRAPGPU_DTYPE_Q6_K,
+    };
+    for (scrapgpu_dtype dtype : types) {
+        // Odd K for float types; one K-block for every quantized type.
+        const int64_t K = dtype == SCRAPGPU_DTYPE_F32 || dtype == SCRAPGPU_DTYPE_F16 ? 19 : 256;
+        for (int64_t M : {1, 3, 4, 5, 9}) {
+            for (int64_t N : {1, 3, 4, 7, 16, 17}) {
+                auto padded = [](scrapgpu_dtype dt, int64_t n0, int64_t n1, int64_t n2, int64_t n3, uint64_t offset) {
+                    scrapgpu_tensor_desc t = tdesc(dt, n0, n1, n2, n3);
+                    t.offset = offset;  // deliberately unaligned host storage
+                    t.nb[1] += 13;
+                    t.nb[2] = t.nb[1] * n1 + 17;
+                    t.nb[3] = t.nb[2] * n2 + 23;
+                    return t;
+                };
+                const scrapgpu_tensor_desc a = padded(dtype, K, M, 2, 2, 3);
+                const scrapgpu_tensor_desc b = padded(SCRAPGPU_DTYPE_F32, K, N, 4, 4, 11);
+                scrapgpu_tensor_desc d = padded(SCRAPGPU_DTYPE_F32, M, N, 4, 4, 7);
+                auto span = [](const scrapgpu_tensor_desc & t) { return t.offset + t.nb[3] * t.ne[3] + 16; };
+                auto at = [](const scrapgpu_tensor_desc & t, int64_t row, int64_t i2, int64_t i3) {
+                    return t.offset + t.nb[1] * row + t.nb[2] * i2 + t.nb[3] * i3;
+                };
+                std::vector<uint8_t> av(static_cast<size_t>(span(a)), 0xA5);
+                std::vector<uint8_t> bv(static_cast<size_t>(span(b)), 0xA5);
+                std::vector<uint8_t> y(static_cast<size_t>(span(d)), 0xA5);
+                std::vector<uint8_t> written(y.size(), 0);
+                std::vector<float> decoded(static_cast<size_t>(K * M * 4));
+                std::vector<float> source(static_cast<size_t>(K));
+                for (int64_t i3 = 0; i3 < 2; ++i3) {
+                    for (int64_t i2 = 0; i2 < 2; ++i2) {
+                        for (int64_t m = 0; m < M; ++m) {
+                            for (int64_t k = 0; k < K; ++k) {
+                                source[static_cast<size_t>(k)] = static_cast<float>((k * 7 + m * 3 + i2 * 11 + i3 * 13) % 37 - 18) / 8.0f;
+                            }
+                            uint8_t * encoded = av.data() + at(a, m, i2, i3);
+                            float * oracle = decoded.data() + ((i3 * 2 + i2) * M + m) * K;
+                            if (dtype == SCRAPGPU_DTYPE_F32) {
+                                std::memcpy(encoded, source.data(), static_cast<size_t>(K) * sizeof(float));
+                                std::memcpy(oracle, source.data(), static_cast<size_t>(K) * sizeof(float));
+                            } else if (dtype == SCRAPGPU_DTYPE_F16) {
+                                const scrapgpu_tensor_desc f32 = tdesc(SCRAPGPU_DTYPE_F32, K);
+                                scrapgpu_tensor_desc half = tdesc(SCRAPGPU_DTYPE_F16, K);
+                                scrapgpu_tensor_desc back = f32;
+                                scrapgpu_cpy_params cp{sizeof(cp), 0};
+                                CHECK_OK(execute(SCRAPGPU_OP_CPY, &f32, {source.data()}, &half, {encoded}, &cp, sizeof(cp)));
+                                CHECK_OK(execute(SCRAPGPU_OP_CPY, &half, {encoded}, &back, {oracle}, &cp, sizeof(cp)));
+                            } else {
+                                CHECK_OK(scrapgpu_ref_quantize(dtype, source.data(), encoded, K));
+                                CHECK_OK(scrapgpu_ref_dequantize(dtype, encoded, oracle, K));
+                            }
+                        }
+                    }
+                }
+                for (int64_t i3 = 0; i3 < 4; ++i3) {
+                    for (int64_t i2 = 0; i2 < 4; ++i2) {
+                        for (int64_t n = 0; n < N; ++n) {
+                            for (int64_t k = 0; k < K; ++k) {
+                                const float value = static_cast<float>((k * 5 + n * 7 + i2 * 3 + i3 * 17) % 29 - 14) / 16.0f;
+                                std::memcpy(bv.data() + at(b, n, i2, i3) + k * sizeof(float), &value, sizeof(value));
+                            }
+                        }
+                    }
+                }
+                const std::vector<uint8_t> original_a = av, original_b = bv;
+                const scrapgpu_tensor_desc in[2] = {a, b};
+                scrapgpu_mul_mat_params p{sizeof(p), 1};
+                CHECK_OK(execute(SCRAPGPU_OP_MUL_MAT, in, {av.data(), bv.data()}, &d, {y.data()}, &p, sizeof(p)));
+                for (int64_t i3 = 0; i3 < 4; ++i3) {
+                    for (int64_t i2 = 0; i2 < 4; ++i2) {
+                        for (int64_t n = 0; n < N; ++n) {
+                            for (int64_t m = 0; m < M; ++m) {
+                                float expected = 0.0f;
+                                const float * w = decoded.data() + ((i3 / 2 * 2 + i2 / 2) * M + m) * K;
+                                for (int64_t k = 0; k < K; ++k) {
+                                    float x;
+                                    std::memcpy(&x, bv.data() + at(b, n, i2, i3) + k * sizeof(float), sizeof(x));
+                                    expected += w[k] * x;
+                                }
+                                const size_t index = static_cast<size_t>(at(d, n, i2, i3) + m * sizeof(float));
+                                float actual;
+                                std::memcpy(&actual, y.data() + index, sizeof(actual));
+                                CHECK_FEQ(actual, expected, 2e-5 * std::max(1.0f, std::fabs(expected)));
+                                for (size_t byte = 0; byte < sizeof(float); ++byte) written[index + byte] = 1;
+                            }
+                        }
+                    }
+                }
+                CHECK(av == original_a && bv == original_b);
+                for (size_t i = 0; i < y.size(); ++i) {
+                    if (!written[i]) CHECK(y[i] == 0xA5);
+                }
+            }
+        }
+    }
+    // This cancellation case distinguishes the original increasing-K float
+    // reduction from pairwise, double, or reassociated accumulation.
+    const scrapgpu_tensor_desc a = tdesc(SCRAPGPU_DTYPE_F32, 5, 5);
+    std::vector<float> weights(25);
+    for (int m = 0; m < 5; ++m) {
+        const float row[] = {1e20f, 1.0f, -1e20f, 3.0f, 4.0f};
+        std::memcpy(weights.data() + m * 5, row, sizeof(row));
+    }
+    for (int64_t N : {1, 4, 16, 17}) {
+        const scrapgpu_tensor_desc b = tdesc(SCRAPGPU_DTYPE_F32, 5, N);
+        scrapgpu_tensor_desc d = tdesc(SCRAPGPU_DTYPE_F32, 5, N);
+        std::vector<float> x(static_cast<size_t>(5 * N), 1.0f), y(static_cast<size_t>(5 * N));
+        const scrapgpu_tensor_desc in[] = {a, b};
+        scrapgpu_mul_mat_params p{sizeof(p), 0};
+        CHECK_OK(execute(SCRAPGPU_OP_MUL_MAT, in, {weights.data(), x.data()}, &d, {y.data()}, &p, sizeof(p)));
+        for (float value : y) CHECK(value == 7.0f);
+    }
+}
+
 void test_mul_mat_id_and_add_id() {
     // two experts, K = 2, M = 2; src1 shares one column per token (ne11 == 1)
     {
@@ -831,6 +948,7 @@ int main() {
     test_rows_ops();
     test_cpy();
     test_mul_mat();
+    test_mul_mat_tiles();
     test_mul_mat_id_and_add_id();
     test_misc_ops();
     test_errors();
