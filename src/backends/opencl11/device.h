@@ -41,6 +41,16 @@ struct cl11_device_info {
     int amd_gfx_major = 0;
 };
 
+// AMD generation, used by the tuning (cl11_tuning_for) and the device info of the C API
+enum cl11_amd_gen {
+    CL11_AMD_NONE,    // not an AMD GPU
+    CL11_AMD_GCN,     // GCN (gfx6 - gfx9: Southern Islands .. Vega); CDNA is GCN-based as well
+    CL11_AMD_RDNA,    // RDNA 1 - 4 (gfx10 and later)
+    CL11_AMD_UNKNOWN, // AMD, generation not determined
+};
+
+cl11_amd_gen cl11_amd_generation(const cl11_device_info & info);
+
 enum cl11_rkind {
     CL11_RK_Q4_0,
     CL11_RK_Q8_0,

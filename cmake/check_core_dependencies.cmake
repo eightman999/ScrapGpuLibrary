@@ -18,7 +18,15 @@ file(GLOB_RECURSE SCRAPGPU_CORE_TESTS
     "${ROOT_DIR}/tests/ref/*.h"
     "${ROOT_DIR}/tests/ref/*.hpp"
     "${ROOT_DIR}/tests/ref/*.c"
-    "${ROOT_DIR}/tests/ref/*.cpp")
+    "${ROOT_DIR}/tests/ref/*.cpp"
+    "${ROOT_DIR}/tests/ops/*.h"
+    "${ROOT_DIR}/tests/ops/*.hpp"
+    "${ROOT_DIR}/tests/ops/*.c"
+    "${ROOT_DIR}/tests/ops/*.cpp"
+    "${ROOT_DIR}/examples/*.h"
+    "${ROOT_DIR}/examples/*.hpp"
+    "${ROOT_DIR}/examples/*.c"
+    "${ROOT_DIR}/examples/*.cpp")
 file(GLOB_RECURSE SCRAPGPU_OPENCL11_SOURCES
     "${ROOT_DIR}/src/backends/opencl11/*.h"
     "${ROOT_DIR}/src/backends/opencl11/*.hpp"

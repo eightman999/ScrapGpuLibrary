@@ -19,6 +19,13 @@ typedef struct scrapgpu_plan_desc {
     size_t node_count;
 } scrapgpu_plan_desc;
 
+// The first member of every object a backend hands out (device, buffer, stream, plan): the core
+// uses it to find the vtable the object belongs to. The backend sets it when the object is created.
+struct scrapgpu_backend_vtable;
+typedef struct scrapgpu_object_header {
+    const struct scrapgpu_backend_vtable * backend;
+} scrapgpu_object_header;
+
 typedef struct scrapgpu_backend_vtable {
     size_t struct_size;
     const char * name;
@@ -37,6 +44,12 @@ typedef struct scrapgpu_backend_vtable {
     scrapgpu_status (*plan_build)(scrapgpu_device_t * device, const scrapgpu_plan_desc * desc, scrapgpu_plan_t ** out_plan);
     scrapgpu_status (*plan_execute)(scrapgpu_stream_t * stream, scrapgpu_plan_t * plan);
     scrapgpu_status (*plan_free)(scrapgpu_plan_t * plan);
+    /* ABI 0.3: fields added at the end; a vtable registered with a smaller struct_size gets NULL here */
+    scrapgpu_status (*stream_create)(scrapgpu_device_t * device, scrapgpu_stream_t ** out_stream);
+    scrapgpu_status (*stream_free)(scrapgpu_stream_t * stream);
+    scrapgpu_status (*tensor_upload)(scrapgpu_stream_t * stream, const scrapgpu_tensor_desc * desc, const void * host, size_t size);
+    scrapgpu_status (*tensor_download)(scrapgpu_stream_t * stream, const scrapgpu_tensor_desc * desc, void * host, size_t size);
+    scrapgpu_status (*op_execute)(scrapgpu_stream_t * stream, const scrapgpu_op_desc * desc);
 } scrapgpu_backend_vtable;
 
 SCRAPGPU_API scrapgpu_status scrapgpu_register_backend(const scrapgpu_backend_vtable * backend);
