@@ -1190,6 +1190,13 @@ scrapgpu_status api_stream_sync(scrapgpu_stream_t * stream) {
     return SCRAPGPU_STATUS_OK;
 }
 
+// the device a stream runs on: all CL11 streams share the device's in-order queue; the core uses
+// the identity for the same-device fast path of scrapgpu_tensor_copy
+scrapgpu_device_t * api_stream_device(scrapgpu_stream_t * stream) {
+    cl11_api_stream * s = api_stream(stream);
+    return s == nullptr ? nullptr : reinterpret_cast<scrapgpu_device_t *>(s->dev);
+}
+
 // ---------------------------------------------------------------------------------------------
 // tensor transfers
 // ---------------------------------------------------------------------------------------------
@@ -1415,6 +1422,7 @@ const scrapgpu_backend_vtable g_cl11_vtable = {
     /* .tensor_upload      = */ api_tensor_upload,
     /* .tensor_download    = */ api_tensor_download,
     /* .op_execute         = */ api_op_execute,
+    /* .stream_device      = */ api_stream_device,
 };
 
 } // namespace

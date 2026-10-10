@@ -1037,6 +1037,102 @@ void test_buffer_ops() {
     std::printf("PASS  buffer copy/fill\n");
 }
 
+// scrapgpu_tensor_copy: bytes must survive the transport exactly, and the copy must be ordered
+// after the work already enqueued on the source stream / before the work enqueued later on the
+// destination stream (docs/API_CONTRACT.md)
+void test_tensor_copy() {
+    {
+        // same device, two streams: the copy must observe the ADD enqueued before it on the source
+        // stream and precede the download enqueued later on the destination stream
+        scrapgpu_stream_t * s2 = nullptr;
+        CHECK_OK(scrapgpu_stream_create(g_dev, &s2));
+        TT x = tmake(tdesc(SCRAPGPU_DTYPE_F32, 257, 3));
+        TT one = tmake(tdesc(SCRAPGPU_DTYPE_F32, 257, 3));
+        TT sum = tmake(tdesc(SCRAPGPU_DTYPE_F32, 257, 3));
+        TT cpy = tmake(tdesc(SCRAPGPU_DTYPE_F32, 257, 3));
+        tfill(x, frand_vec(tn(x.rdesc)));
+        tfill(one, frand_vec(tn(one.rdesc)));
+        tupload(x);
+        tupload(one);
+        const scrapgpu_tensor_desc ins[2] = {one.gdesc, x.gdesc};
+        scrapgpu_tensor_desc sum_d = sum.gdesc;
+        scrapgpu_op_desc d{};
+        d.struct_size = sizeof(d);
+        d.op = SCRAPGPU_OP_ADD;
+        d.inputs = ins;
+        d.input_count = 2;
+        d.outputs = &sum_d;
+        d.output_count = 1;
+        CHECK_OK(scrapgpu_op_execute(g_stream, &d)); // still in flight
+        CHECK_OK(scrapgpu_tensor_copy(g_stream, &sum.gdesc, s2, &cpy.gdesc));
+        CHECK_OK(scrapgpu_tensor_download(s2, &cpy.gdesc, cpy.host.data(), cpy.host.size()));
+        tdownload(sum);
+        CHECK(std::memcmp(cpy.host.data(), sum.host.data(), cpy.host.size()) == 0);
+        std::printf("PASS  %-24s F32 after an enqueued ADD, 2 streams, exact bytes\n", "tensor_copy same dev");
+        ++g_run;
+        CHECK_OK(scrapgpu_stream_free(s2));
+    }
+    {
+        // a blocked dtype through one stream, plus the R32 rejection
+        TT q = tmake(tdesc(SCRAPGPU_DTYPE_Q4_0, 96, 5));
+        tquantize(q, frand_vec(tn(q.rdesc)));
+        TT qc = tmake(tdesc(SCRAPGPU_DTYPE_Q4_0, 96, 5));
+        tupload(q); // natural bytes (the R32 packing only happens with layout = R32)
+        CHECK_OK(scrapgpu_tensor_copy(g_stream, &q.gdesc, g_stream, &qc.gdesc));
+        CHECK_OK(scrapgpu_tensor_download(g_stream, &qc.gdesc, qc.host.data(), qc.host.size()));
+        CHECK(std::memcmp(qc.host.data(), q.host.data(), qc.host.size()) == 0);
+        q.gdesc.layout = SCRAPGPU_LAYOUT_R32;
+        qc.gdesc.layout = SCRAPGPU_LAYOUT_R32;
+        CHECK(scrapgpu_tensor_copy(g_stream, &q.gdesc, g_stream, &qc.gdesc) == SCRAPGPU_STATUS_UNSUPPORTED);
+        std::printf("PASS  %-24s Q4_0 natural exact bytes, R32 rejected\n", "tensor_copy q4_0");
+        ++g_run;
+    }
+    {
+        // across devices (when two devices exist), both directions, exact bytes
+        if (scrapgpu_get_device_count() < 2) {
+            std::printf("SKIP  %-24s needs a second device\n", "tensor_copy cross dev");
+            ++g_skipped;
+        } else {
+            scrapgpu_device_t * dev1 = nullptr;
+            CHECK_OK(scrapgpu_get_device(1, &dev1));
+            scrapgpu_stream_t * s1 = nullptr;
+            CHECK_OK(scrapgpu_stream_create(dev1, &s1));
+            const int64_t n = 513;
+            const size_t bytes = (size_t) n * 4;
+            std::vector<uint8_t> pat(bytes), back(bytes), back2(bytes);
+            for (size_t i = 0; i < bytes; ++i) {
+                pat[i] = (uint8_t) (i * 131u + 7u);
+            }
+            scrapgpu_buffer_t * b0 = g_alloc(bytes);
+            scrapgpu_buffer_t * b1 = nullptr, * b0r = nullptr;
+            CHECK_OK(scrapgpu_buffer_alloc(dev1, bytes, &b1));
+            CHECK_OK(scrapgpu_buffer_alloc(g_dev, bytes, &b0r));
+            scrapgpu_tensor_desc t0 = tdesc(SCRAPGPU_DTYPE_I32, n);
+            scrapgpu_tensor_desc t1 = tdesc(SCRAPGPU_DTYPE_I32, n);
+            scrapgpu_tensor_desc t0r = tdesc(SCRAPGPU_DTYPE_I32, n);
+            t0.buffer = b0;
+            t1.buffer = b1;
+            t0r.buffer = b0r;
+            CHECK_OK(scrapgpu_tensor_upload(g_stream, &t0, pat.data(), bytes));
+            CHECK_OK(scrapgpu_tensor_copy(g_stream, &t0, s1, &t1));
+            CHECK_OK(scrapgpu_tensor_download(s1, &t1, back.data(), bytes));
+            CHECK(std::memcmp(back.data(), pat.data(), bytes) == 0);
+            for (size_t i = 0; i < bytes; ++i) {
+                back[i] ^= 0x5au;
+            }
+            CHECK_OK(scrapgpu_tensor_upload(s1, &t1, back.data(), bytes));
+            CHECK_OK(scrapgpu_tensor_copy(s1, &t1, g_stream, &t0r));
+            CHECK_OK(scrapgpu_tensor_download(g_stream, &t0r, back2.data(), bytes));
+            CHECK(std::memcmp(back2.data(), back.data(), bytes) == 0);
+            CHECK_OK(scrapgpu_buffer_free(b1));
+            CHECK_OK(scrapgpu_buffer_free(b0r));
+            std::printf("PASS  %-24s both directions, exact bytes\n", "tensor_copy cross dev");
+            ++g_run;
+            CHECK_OK(scrapgpu_stream_free(s1));
+        }
+    }
+}
+
 } // namespace
 
 int main() {
@@ -1059,6 +1155,7 @@ int main() {
     CHECK_OK(scrapgpu_stream_create(g_dev, &g_stream));
 
     test_buffer_ops();
+    test_tensor_copy();
     test_binary();
     test_unary_family();
     test_glu();

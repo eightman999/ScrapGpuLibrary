@@ -29,7 +29,8 @@ if (SCRAPGPU_BUILD_CORE)
         src/core/ref/quant.cpp
         src/core/registry.cpp
         src/core/status.cpp
-        src/core/tensor.cpp)
+        src/core/tensor.cpp
+        src/core/transport.cpp)
     target_include_directories(scrapgpu_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
     target_link_libraries(scrapgpu_core PRIVATE scrapgpu_tensor)
     target_compile_features(scrapgpu_core PUBLIC cxx_std_17)
@@ -134,4 +135,8 @@ if (SCRAPGPU_BUILD_EXAMPLES)
     add_executable(scrapgpu_standalone_matmul examples/standalone_matmul.c)
     target_link_libraries(scrapgpu_standalone_matmul PRIVATE scrapgpu_opencl11_api)
     set_target_properties(scrapgpu_standalone_matmul PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED ON)
+
+    add_executable(scrapgpu_pipeline_mlp examples/pipeline_mlp.c)
+    target_link_libraries(scrapgpu_pipeline_mlp PRIVATE scrapgpu_opencl11_api)
+    set_target_properties(scrapgpu_pipeline_mlp PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED ON)
 endif()
