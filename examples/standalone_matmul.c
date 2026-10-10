@@ -152,10 +152,17 @@ int main(void) {
         return 1;
     }
 
-    const double t0 = now_s();
+    /* the first call builds the OpenCL program (seconds on Mesa): run it once before timing */
     if ((st = scrapgpu_op_execute(stream, &op)) != SCRAPGPU_STATUS_OK) fail("op_execute", st);
     if ((st = scrapgpu_stream_sync(stream)) != SCRAPGPU_STATUS_OK) fail("stream_sync", st);
-    const double ms = (now_s() - t0) * 1e3;
+
+    const int reps = 10;
+    const double t0 = now_s();
+    for (int r = 0; r < reps; ++r) {
+        if ((st = scrapgpu_op_execute(stream, &op)) != SCRAPGPU_STATUS_OK) fail("op_execute", st);
+    }
+    if ((st = scrapgpu_stream_sync(stream)) != SCRAPGPU_STATUS_OK) fail("stream_sync", st);
+    const double ms = (now_s() - t0) * 1e3 / reps;
 
     if ((st = scrapgpu_tensor_download(stream, &yt, y, (size_t) M * N * 4)) != SCRAPGPU_STATUS_OK) fail("download y", st);
 
@@ -184,7 +191,7 @@ int main(void) {
         num += d * d;
         den += (double) y_ref[i] * y_ref[i];
     }
-    printf("MUL_MAT Q4_0(R32) [%d x %d] * [%d x %d]: NMSE %.3e, %.3f ms\n", K, M, K, N,
+    printf("MUL_MAT Q4_0(R32) [%d x %d] * [%d x %d]: NMSE %.3e, %.3f ms per call (after a warm-up)\n", K, M, K, N,
            den > 0.0 ? num / den : num, ms);
 
     scrapgpu_buffer_free(bw);

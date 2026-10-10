@@ -975,6 +975,40 @@ void test_cont_mul_mat() {
     run_one("CONT_MUL_MAT", SCRAPGPU_OP_CONT_MUL_MAT, ins, outs, nullptr, 0, {tfloats(dref[0])}, 1e-7, false);
 }
 
+// The V cache case of llama.cpp (kq * V with the transposed V view): a is [n_kv, head_dim, kv_heads] with the
+// elements of dim 1 contiguous, one row of the cache (all heads of a token) per n_kv step. This is the layout the
+// k_mvt_f16 kernel of the devices without mvt_groups (NVIDIA) needs (cl11_attn_ok: hd and n_kv multiples of 8,
+// 16-byte aligned rows, at most 8 query heads per cache head).
+void test_cont_mul_mat_vcache() {
+    const int64_t n_kv = 24, head_dim = 64, kv_heads = 2, q_heads = 8;
+    scrapgpu_tensor_desc ad = tdesc(SCRAPGPU_DTYPE_F16, n_kv, head_dim, kv_heads);
+    ad.nb[0] = (uint64_t) head_dim * kv_heads * 2; // one cache row: every head of a token
+    ad.nb[1] = 2;
+    ad.nb[2] = (uint64_t) head_dim * 2;
+    ad.nb[3] = ad.nb[0] * n_kv;
+    TT a = tmake(ad);
+    tfill(a, frand_vec(tn(a.rdesc)));
+
+    TT x = tmake(tdesc(SCRAPGPU_DTYPE_F32, n_kv, 1, q_heads));
+    tfill(x, frand_vec(tn(x.rdesc)));
+    TT d = tmake(tdesc(SCRAPGPU_DTYPE_F32, head_dim, 1, q_heads));
+
+    std::vector<TT> cont = {tmake_ref(tdesc(SCRAPGPU_DTYPE_F16, n_kv, head_dim, kv_heads))};
+    {
+        std::vector<TT> ci = {a};
+        ref_exec(SCRAPGPU_OP_CONT, ci, cont, nullptr, 0);
+    }
+    std::vector<TT> dref = {tmake_ref(d.rdesc)};
+    {
+        scrapgpu_mul_mat_params p{sizeof(p), 1};
+        std::vector<TT> mi = {cont[0], x};
+        ref_exec(SCRAPGPU_OP_MUL_MAT, mi, dref, &p, sizeof(p));
+    }
+    std::vector<TT> ins = {a, x};
+    std::vector<TT> outs = {d};
+    run_one("CONT_MUL_MAT V cache", SCRAPGPU_OP_CONT_MUL_MAT, ins, outs, nullptr, 0, {tfloats(dref[0])}, 1e-7, false);
+}
+
 void test_buffer_ops() {
     TT t = tmake(tdesc(SCRAPGPU_DTYPE_F32, 64));
     tfill(t, frand_vec(64));
@@ -1032,6 +1066,7 @@ int main() {
     test_concat_pad_sumrows();
     test_argsort();
     test_cont_mul_mat();
+    test_cont_mul_mat_vcache();
 
     for (scrapgpu_buffer_t * b : g_buffers) {
         CHECK_OK(scrapgpu_buffer_free(b));
