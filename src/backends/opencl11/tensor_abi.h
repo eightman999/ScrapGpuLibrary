@@ -69,7 +69,7 @@ inline cl11_bcast cl11_make_bcast(int64_t r2, int64_t r3, int64_t tiles, int64_t
 
 // the descriptor of the 2-D tensor [ne0, ne1] at the byte offset `off` (the slices of an experts
 // tensor, the scratch columns of MUL_MAT_ID)
-inline cl11_td cl11_td_matrix(int64_t ne0, int64_t ne1, size_t nb0, size_t nb1, size_t off) {
+inline sgt::TensorDesc cl11_matrix_desc(int64_t ne0, int64_t ne1, size_t nb0, size_t nb1, size_t off) {
     sgt::TensorDesc d;
     d.ne[0] = ne0;
     d.ne[1] = ne1;
@@ -78,7 +78,11 @@ inline cl11_td cl11_td_matrix(int64_t ne0, int64_t ne1, size_t nb0, size_t nb1, 
     d.nb[2] = (uint64_t) nb1 * (uint64_t) ne1;
     d.nb[3] = d.nb[2];
     d.offset = (uint64_t) off;
-    return cl11_make_td(d);
+    return d;
+}
+
+inline cl11_td cl11_td_matrix(int64_t ne0, int64_t ne1, size_t nb0, size_t nb1, size_t off) {
+    return cl11_make_td(cl11_matrix_desc(ne0, ne1, nb0, nb1, off));
 }
 
 #endif

@@ -45,6 +45,10 @@ if (SCRAPGPU_BUILD_OPENCL11)
         src/backends/opencl11/device.cpp
         src/backends/opencl11/device_state.cpp
         src/backends/opencl11/kernels.cpp
+        src/backends/opencl11/ops.cpp
+        src/backends/opencl11/ops_matmul.cpp
+        src/backends/opencl11/ops_moe.cpp
+        src/backends/opencl11/ops_support.cpp
         src/backends/opencl11/r32.cpp)
     target_include_directories(scrapgpu_opencl11 PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/src/backends"
