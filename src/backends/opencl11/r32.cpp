@@ -18,6 +18,9 @@
 // per chunk of whole groups of rows of a slice; a chunk that is only partly written is read, patched and written back.
 bool cl11_rp_transfer(cl11_device * c, cl_mem mem, const sgt::TensorDesc & t, uint8_t * host, size_t offset, size_t size, bool to_dev) {
     const sgt::r32_geom G = sgt::r32_geometry(t);
+    if (G.rowb == 0 || G.M <= 0) {
+        return false; // a partial-block row has no R32 geometry (r32_eligible rejects it first)
+    }
     const size_t slice_nat = (size_t) G.M * G.rowb;
     const size_t end = offset + size;
     const size_t base = (size_t) t.offset;

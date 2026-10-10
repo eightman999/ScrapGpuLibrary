@@ -28,6 +28,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 // OpenCL 1.1 device info id; old macOS headers do not define it
@@ -72,11 +73,36 @@ struct cl11_api_plan {
     scrapgpu_object_header           hdr;
     cl11_api_device *                dev = nullptr;
     std::vector<cl11_api_plan_node>  nodes;
+    // every backend buffer the node descriptors reference: a plan keeps no ownership, but
+    // buffer_free refuses while a plan points at the buffer (audit M-2)
+    std::vector<cl11_api_buffer *>   bufs;
 };
 
 extern const scrapgpu_backend_vtable g_cl11_vtable; // defined under "registration" below
 
 std::vector<std::unique_ptr<cl11_api_device>> g_devices;
+
+// how many live plans reference each buffer (the pointers of the descriptor copies in the plans)
+std::mutex                                     g_plan_bufs_mutex;
+std::unordered_map<cl11_api_buffer *, size_t>  g_plan_bufs;
+
+void plan_ref_buffer(cl11_api_buffer * b) {
+    std::lock_guard<std::mutex> lock(g_plan_bufs_mutex);
+    ++g_plan_bufs[b];
+}
+
+void plan_unref_buffer(cl11_api_buffer * b) {
+    std::lock_guard<std::mutex> lock(g_plan_bufs_mutex);
+    const auto it = g_plan_bufs.find(b);
+    if (it != g_plan_bufs.end() && --it->second == 0) {
+        g_plan_bufs.erase(it);
+    }
+}
+
+bool plan_refs_buffer(cl11_api_buffer * b) {
+    std::lock_guard<std::mutex> lock(g_plan_bufs_mutex);
+    return g_plan_bufs.find(b) != g_plan_bufs.end();
+}
 
 // ---------------------------------------------------------------------------------------------
 // helpers
@@ -251,7 +277,8 @@ scrapgpu_status api_supports_cont_mul_mat(cl11_api_device * d, const sgt::Tensor
     if (!sgt::is_transposed(a) || a.nb[1] != sgt::dtype_type_size(SCRAPGPU_DTYPE_F16)) {
         return api_no("CONT_MUL_MAT src0 must be a transposed F16 view (dim 1 contiguous)", reason);
     }
-    if (x.ne[1] != 1 || x.nb[0] != sizeof(float) || dst.nb[0] != sizeof(float) || a.ne[0] != x.ne[0] || x.ne[2] % a.ne[2] != 0) {
+    if (x.ne[1] != 1 || x.nb[0] != sizeof(float) || dst.nb[0] != sizeof(float) || a.ne[0] != x.ne[0] ||
+        a.ne[2] <= 0 || a.ne[3] <= 0 || x.ne[2] % a.ne[2] != 0) {
         return api_no("CONT_MUL_MAT needs a single F32 column x with x.ne[0] == a.ne[0] and x.ne[2] a multiple of a.ne[2]", reason);
     }
     if (dst.ne[0] != a.ne[1] || dst.ne[1] != 1 || dst.ne[2] != x.ne[2] || dst.ne[3] != x.ne[3]) {
@@ -1016,6 +1043,9 @@ scrapgpu_status api_buffer_free(scrapgpu_buffer_t * buffer) {
     if (b == nullptr) {
         return api_invalid("not a CL11 buffer");
     }
+    if (plan_refs_buffer(b)) {
+        return api_invalid("buffer is still referenced by a live plan");
+    }
     cl11_device * c = &b->dev->dev;
     {
         std::lock_guard<std::mutex> lock(c->mutex);
@@ -1306,7 +1336,7 @@ scrapgpu_status api_plan_build(scrapgpu_device_t * device, const scrapgpu_plan_d
     cl11_api_device * d = api_device(device);
     if (d == nullptr || desc == nullptr || out_plan == nullptr ||
         desc->struct_size < offsetof(scrapgpu_plan_desc, node_count) + sizeof(desc->node_count) ||
-        (desc->node_count > 0 && desc->nodes == nullptr)) {
+        desc->node_count > 4096 || (desc->node_count > 0 && desc->nodes == nullptr)) {
         return api_invalid("device, plan desc or node list is invalid");
     }
     *out_plan = nullptr;
@@ -1353,7 +1383,21 @@ scrapgpu_status api_plan_build(scrapgpu_device_t * device, const scrapgpu_plan_d
             auto * p = reinterpret_cast<scrapgpu_soft_max_params *>(n.params.data());
             p->mask = p->mask != nullptr && n.inputs.size() > 1 ? &n.inputs[1] : nullptr;
         }
+        // the buffers the node references: buffer_free must refuse while this plan is alive
+        for (const scrapgpu_tensor_desc & t : n.inputs) {
+            if (cl11_api_buffer * rb = api_buffer(t.buffer)) {
+                plan->bufs.push_back(rb);
+            }
+        }
+        for (const scrapgpu_tensor_desc & t : n.outputs) {
+            if (cl11_api_buffer * rb = api_buffer(t.buffer)) {
+                plan->bufs.push_back(rb);
+            }
+        }
         plan->nodes.push_back(std::move(n));
+    }
+    for (cl11_api_buffer * rb : plan->bufs) {
+        plan_ref_buffer(rb);
     }
     *out_plan = reinterpret_cast<scrapgpu_plan_t *>(plan.release());
     return SCRAPGPU_STATUS_OK;
@@ -1390,6 +1434,9 @@ scrapgpu_status api_plan_free(scrapgpu_plan_t * plan_) {
     auto * plan = reinterpret_cast<cl11_api_plan *>(plan_);
     if (plan == nullptr || plan->hdr.backend != &g_cl11_vtable) {
         return api_invalid("not a CL11 plan");
+    }
+    for (cl11_api_buffer * rb : plan->bufs) {
+        plan_unref_buffer(rb);
     }
     delete plan;
     return SCRAPGPU_STATUS_OK;

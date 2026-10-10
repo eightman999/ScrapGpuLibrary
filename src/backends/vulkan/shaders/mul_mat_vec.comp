@@ -30,6 +30,8 @@ layout(push_constant) uniform Params {
     uint d_off, d_nb2, d_nb3;             // dst base + batch strides (ne1 == 1)
     uint r2, r3;                          // broadcast factors src1.ne[23] / src0.ne[23]
     uint ne12;                            // src1.ne[2]: the flat batch index = i13*ne12 + i12
+    uint nrows;                           // src0.ne[1]: bounds the flat row index (must stay in
+                                          // sync with pc_mv in api.cpp)
 } p;
 
 shared float sumsh[BLOCK];
@@ -44,6 +46,13 @@ float s8(uint v) { return float(int(v ^ 0x80u) - 128); }
 
 void main() {
     const uint row = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
+    // the dispatch is padded (gx is capped at 65535 and gy covers the rest): workgroups past the
+    // last row must not touch the tensor. The guard is uniform per workgroup — row depends on the
+    // workgroup ids only — so a whole workgroup returns together and no partial workgroup skips
+    // the barrier() inside reduce_result.
+    if (row >= p.nrows) {
+        return;
+    }
     const uint batch = gl_WorkGroupID.z;
     const uint tid = gl_LocalInvocationID.x;
     const uint i12 = batch % p.ne12;

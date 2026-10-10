@@ -45,6 +45,14 @@ scrapgpu_status validate_counts(const scrapgpu_op_desc * desc, size_t inputs, si
     }
     return SCRAPGPU_STATUS_OK;
 }
+
+// a sanity bound on the number of tensors of one op: every op of the API takes at most 4 inputs
+// (SET_ROWS_PAIR) and 2 outputs; a larger count is always a malformed descriptor and the plan
+// builders copy the arrays, so they must be bounded (audit H-3)
+constexpr size_t kMaxOpTensors = 32;
+// the params are fixed-size structs (the largest is a few hundred bytes); the plan builders and
+// the remote protocol copy params_size bytes, so a malformed huge size would read out of bounds
+constexpr size_t kMaxOpParams = 4096;
 }
 
 extern "C" {
@@ -52,6 +60,25 @@ extern "C" {
 scrapgpu_status scrapgpu_op_desc_validate(const scrapgpu_op_desc * desc) {
     if (desc == nullptr) {
         return invalid("op desc is null");
+    }
+    // everything below reads the fields through params_size: a descriptor that does not reach that
+    // far cannot be validated (desc->op / desc->params must not be touched before this check)
+    if (desc->struct_size < offsetof(scrapgpu_op_desc, params_size) + sizeof(desc->params_size)) {
+        return invalid("op desc is null or too small");
+    }
+    // structural validation of every descriptor, before the early return of the metadata ops
+    if (desc->input_count > kMaxOpTensors || desc->output_count > kMaxOpTensors) {
+        return invalid("op desc has an invalid input or output count");
+    }
+    if ((desc->input_count > 0 && desc->inputs == nullptr) ||
+        (desc->output_count > 0 && desc->outputs == nullptr)) {
+        return invalid("op desc has a null input or output array");
+    }
+    if (desc->params == nullptr && desc->params_size > 0) {
+        return invalid("op desc params_size is set but params is null");
+    }
+    if (desc->params_size > kMaxOpParams) {
+        return invalid("op desc params_size is too large");
     }
     switch (desc->op) {
         case SCRAPGPU_OP_NONE:

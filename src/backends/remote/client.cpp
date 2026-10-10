@@ -11,6 +11,7 @@
 #include "scrapgpu/backend.h"
 #include "scrapgpu/remote.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <cstdio>
@@ -195,11 +196,19 @@ rmt_resp rmt_invoke(rmt_client * c, uint32_t op, const std::vector<uint8_t> & re
         r.status = rmt_lost(c, "remote: the server closed the connection");
         return r;
     }
-    if (size > (uint64_t) (1ull << 34)) { // corrupt stream: refuse to allocate absurd buffers
+    // a legitimate response carries at most the inline bulk limit plus the framing; anything
+    // bigger means a corrupt or hostile peer (audit H-2)
+    if (size > (uint64_t) sgr::kMaxPayload + 64 * 1024) {
         r.status = rmt_lost(c, "remote: malformed response header");
         return r;
     }
-    r.storage.resize((size_t) size);
+    try {
+        r.storage.resize((size_t) size);
+    } catch (const std::bad_alloc &) {
+        // the payload cannot be read without the buffer, so the stream cannot be resynchronised
+        r.status = rmt_lost(c, "remote: out of memory for the response payload");
+        return r;
+    }
     if (size > 0 && !read_all(c->fd, r.storage.data(), (size_t) size)) {
         r.status = rmt_lost(c, "remote: the server closed the connection mid-response");
         return r;
@@ -265,6 +274,14 @@ bool rmt_shm_ensure(rmt_client * c, size_t need) {
 // payload. `head` already carries the call's fields; this appends {u32 via_shm, [data]}.
 rmt_resp rmt_push(rmt_client * c, uint32_t op, std::vector<uint8_t> & req, const void * data, size_t size) {
     const bool shm = size > 0 && c->shm_fd >= 0 && rmt_shm_ensure(c, size);
+    if (!shm && size > 0 && size + req.size() > sgr::kMaxPayload) {
+        // inline payloads are bounded by the protocol limit; bigger transfers need the shm (the
+        // buffer_write callers split their data into per-message chunks instead)
+        scrapgpu_set_last_error("remote: bulk transfer needs the shared memory (inline limit)");
+        rmt_resp r;
+        r.status = SCRAPGPU_STATUS_OUT_OF_MEMORY;
+        return r;
+    }
     if (shm) {
         std::memcpy(c->shm, data, size);
     }
@@ -291,6 +308,10 @@ scrapgpu_status rmt_pull(rmt_client * c, rmt_resp & r, void * data, size_t size)
         return SCRAPGPU_STATUS_OK;
     }
     if (via != 0) {
+        if (shm_now > sgr::kMaxShm) {
+            scrapgpu_set_last_error("remote: the reported shared memory size exceeds the protocol limit");
+            return SCRAPGPU_STATUS_BACKEND_ERROR;
+        }
         if (shm_now > c->shm_size && !rmt_shm_map(c, (size_t) shm_now)) {
             scrapgpu_set_last_error("remote: cannot map the shared memory the server grew");
             return SCRAPGPU_STATUS_BACKEND_ERROR;
@@ -473,7 +494,11 @@ scrapgpu_status rmt_buffer_free(scrapgpu_buffer_t * buffer) {
     sgr::put_u64(req, b->id);
     std::lock_guard<std::mutex> lock(c->mtx);
     const scrapgpu_status st = rmt_invoke(c, SGR_OP_BUFFER_FREE, req).status;
-    delete b; // the proxy is dead regardless of the transport result
+    if (st != SCRAPGPU_STATUS_INVALID_ARGUMENT) {
+        // the proxy is dead regardless of the transport result — except when the server refused
+        // the free (a live plan references the buffer, audit M-2): then the id is still valid
+        delete b;
+    }
     return st;
 }
 
@@ -484,14 +509,27 @@ scrapgpu_status rmt_buffer_write(scrapgpu_stream_t * stream, scrapgpu_buffer_t *
         return rmt_invalid("stream or buffer is not a remote object of this connection");
     }
     rmt_client * c = s->owner;
-    std::vector<uint8_t> req;
-    sgr::put_u64(req, s->id);
-    sgr::put_u64(req, b->id);
-    sgr::put_u64(req, offset);
-    sgr::put_u64(req, size);
-    sgr::put_u32(req, blocking ? 1u : 0u);
+    const uint8_t * q = static_cast<const uint8_t *>(data);
     std::lock_guard<std::mutex> lock(c->mtx);
-    return rmt_push(c, SGR_OP_BUFFER_WRITE, req, data, size).status;
+    // an inline request is bounded by the protocol limit: a bigger write is chunked so it still
+    // works when the shared memory is unavailable (each chunk is an ordered BUFFER_WRITE)
+    for (size_t done = 0;;) {
+        const size_t chunk = std::min<size_t>(size - done, sgr::kMaxPayload / 2);
+        std::vector<uint8_t> req;
+        sgr::put_u64(req, s->id);
+        sgr::put_u64(req, b->id);
+        sgr::put_u64(req, offset + done);
+        sgr::put_u64(req, chunk);
+        sgr::put_u32(req, blocking ? 1u : 0u);
+        const scrapgpu_status st = rmt_push(c, SGR_OP_BUFFER_WRITE, req, q + done, chunk).status;
+        if (st != SCRAPGPU_STATUS_OK) {
+            return st;
+        }
+        done += chunk;
+        if (done >= size) {
+            return SCRAPGPU_STATUS_OK;
+        }
+    }
 }
 
 scrapgpu_status rmt_buffer_read(scrapgpu_stream_t * stream, scrapgpu_buffer_t * buffer, uint64_t offset, void * data, size_t size, int blocking) {
@@ -722,7 +760,7 @@ scrapgpu_status rmt_plan_build(scrapgpu_device_t * device, const scrapgpu_plan_d
     rmt_device * d = as_device(device);
     if (d == nullptr || desc == nullptr || out_plan == nullptr ||
         desc->struct_size < offsetof(scrapgpu_plan_desc, node_count) + sizeof(desc->node_count) ||
-        (desc->node_count > 0 && desc->nodes == nullptr)) {
+        desc->node_count > 4096 || (desc->node_count > 0 && desc->nodes == nullptr)) {
         return rmt_invalid("device, plan desc or node list is invalid");
     }
     *out_plan = nullptr;

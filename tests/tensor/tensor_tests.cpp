@@ -42,8 +42,8 @@ void test_dtype() {
     CHECK(sgt::dtype_type_size(SCRAPGPU_DTYPE_Q4_K) == 144);
     CHECK(sgt::dtype_block_size(SCRAPGPU_DTYPE_Q6_K) == 256);
     CHECK(sgt::dtype_type_size(SCRAPGPU_DTYPE_Q6_K) == 210);
-    CHECK(sgt::dtype_block_size((scrapgpu_dtype) -1) == 0);
-    CHECK(sgt::dtype_type_size((scrapgpu_dtype) -1) == 0);
+    CHECK(sgt::dtype_block_size(SCRAPGPU_DTYPE_UNKNOWN) == 0);
+    CHECK(sgt::dtype_type_size(SCRAPGPU_DTYPE_UNKNOWN) == 0);
 
     CHECK(!sgt::dtype_is_quantized(SCRAPGPU_DTYPE_F32));
     CHECK(sgt::dtype_is_quantized(SCRAPGPU_DTYPE_Q4_0));
@@ -63,7 +63,7 @@ void test_dtype() {
     CHECK(sgt::row_size(SCRAPGPU_DTYPE_Q4_K, 512) == 288);
     CHECK(sgt::row_size(SCRAPGPU_DTYPE_Q6_K, 512) == 420);
     CHECK(sgt::row_size(SCRAPGPU_DTYPE_F32, -1) == 0);
-    CHECK(sgt::row_size((scrapgpu_dtype) -1, 64) == 0);
+    CHECK(sgt::row_size(SCRAPGPU_DTYPE_UNKNOWN, 64) == 0);
     CHECK(sgt::row_size(SCRAPGPU_DTYPE_I64, INT64_MAX) == 0); // overflow -> 0
 }
 
@@ -241,6 +241,36 @@ void test_fits_int32() {
     CHECK(sparse.nb[1] <= (uint64_t) INT32_MAX);
     CHECK(sgt::nbytes(sparse) > (uint64_t) INT32_MAX - 65536);
     CHECK(!sgt::fits_int32(sparse));
+
+    // audit M-4: the element count is multiplied overflow-checked — dims whose product wraps to a
+    // small value must not pass the int32 limits
+    {
+        sgt::TensorDesc wrap;
+        wrap.ne[0] = 1 << 21;
+        wrap.ne[1] = 1 << 21;
+        wrap.ne[2] = 1 << 22; // ne0*ne1*ne2 == 2^64, wraps to 0 in an unchecked int64 product
+        wrap.nb[0] = wrap.nb[1] = wrap.nb[2] = wrap.nb[3] = 4; // small strides, like a broadcast view
+        CHECK(sgt::nelements(wrap) > INT32_MAX - 65536);
+        CHECK(!sgt::fits_int32(wrap));
+    }
+    {
+        // the same for the byte count of a sparse view
+        sgt::TensorDesc w;
+        w.ne[0] = INT32_MAX;
+        w.ne[1] = INT32_MAX;
+        w.nb[0] = (uint64_t) 1 << 40; // (ne0 - 1) * nb0 overflows uint64
+        w.nb[1] = w.nb[2] = w.nb[3] = 4;
+        CHECK(sgt::nbytes(w) == UINT64_MAX); // the span saturates instead of wrapping
+        CHECK(!sgt::fits_int32(w));
+    }
+    {
+        // large but representable counts keep their exact value
+        sgt::TensorDesc big;
+        big.ne[0] = INT32_MAX;
+        big.ne[1] = INT32_MAX;
+        CHECK(sgt::nelements(big) == (int64_t) INT32_MAX * INT32_MAX);
+        CHECK(!sgt::fits_int32(big));
+    }
 }
 
 void test_fastdiv() {
@@ -300,6 +330,14 @@ void test_r32() {
     sgt::TensorDesc nc = desc(SCRAPGPU_DTYPE_Q4_0, 64, 32, 1, 1);
     nc.nb[1] += 16;
     CHECK(!sgt::r32_eligible(nc)); // not contiguous
+
+    // audit H-5: ne[0] must cover whole blocks — a partial-block row would give rowb == 0 and a
+    // division by zero in the transfer
+    CHECK(!sgt::r32_eligible(desc(SCRAPGPU_DTYPE_Q4_0, 16, 1, 1, 1)));  // 16 < block size 32
+    CHECK(!sgt::r32_eligible(desc(SCRAPGPU_DTYPE_Q4_0, 48, 4, 1, 1)));  // 48 % 32 != 0
+    CHECK(!sgt::r32_eligible(desc(SCRAPGPU_DTYPE_Q8_0, 16, 4, 1, 1)));
+    CHECK(!sgt::r32_eligible(desc(SCRAPGPU_DTYPE_Q4_K, 128, 1, 1, 1))); // 128 < block size 256
+    CHECK(sgt::r32_eligible(desc(SCRAPGPU_DTYPE_Q4_0, 32, 4, 1, 1)));   // exactly one block: fine
 
     // the geometry: blocks per row, block bytes, the areas
     const sgt::r32_geom g40 = sgt::r32_geometry(desc(SCRAPGPU_DTYPE_Q4_0, 64, 16, 2, 1));

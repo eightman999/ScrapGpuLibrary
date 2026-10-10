@@ -4,6 +4,7 @@
 // Exit code 77 (ctest SKIP_RETURN_CODE) when no device of the backend exists.
 
 #include "scrapgpu/api.h"
+#include "scrapgpu/backend.h"
 #include "scrapgpu/buffer.h"
 #include "scrapgpu/device.h"
 #include "scrapgpu/op.h"
@@ -1053,6 +1054,64 @@ void test_buffer_ops() {
     std::printf("PASS  buffer copy/fill\n");
 }
 
+// a live plan references the buffers of its node descriptors: freeing one of them must be
+// refused until the plan is freed (docs/API_CONTRACT.md, audit M-2)
+void test_plan_lifetime() {
+    scrapgpu_tensor_desc a = tdesc(SCRAPGPU_DTYPE_F32, 64);
+    scrapgpu_tensor_desc d = tdesc(SCRAPGPU_DTYPE_F32, 64);
+    scrapgpu_buffer_t * ba = nullptr;
+    scrapgpu_buffer_t * bd = nullptr;
+    CHECK_OK(scrapgpu_buffer_alloc(g_dev, (size_t) tspan(a), &ba));
+    CHECK_OK(scrapgpu_buffer_alloc(g_dev, (size_t) tspan(d), &bd));
+    a.buffer = ba;
+    d.buffer = bd;
+    scrapgpu_tensor_desc ins[2] = {a, a};
+    scrapgpu_tensor_desc outs[1] = {d};
+    scrapgpu_plan_node node{};
+    node.struct_size = sizeof(node);
+    node.output_use_count = 1;
+    node.op.struct_size = sizeof(node.op);
+    node.op.op = SCRAPGPU_OP_ADD;
+    node.op.inputs = ins;
+    node.op.input_count = 2;
+    node.op.outputs = outs;
+    node.op.output_count = 1;
+    const char * why = nullptr;
+    if (scrapgpu_op_supported(g_dev, &node.op, &why) != SCRAPGPU_STATUS_OK) {
+        std::printf("SKIP  %-24s %s\n", "plan buffer lifetime", why != nullptr ? why : "op not supported");
+        ++g_skipped;
+        CHECK_OK(scrapgpu_buffer_free(ba));
+        CHECK_OK(scrapgpu_buffer_free(bd));
+        return;
+    }
+    scrapgpu_plan_desc pd{};
+    pd.struct_size = sizeof(pd);
+    pd.nodes = &node;
+    pd.node_count = 1;
+    scrapgpu_plan_t * plan = nullptr;
+    CHECK_OK(scrapgpu_plan_build(g_dev, &pd, &plan));
+    // freeing a buffer a live plan references must be refused, and the buffer must stay usable
+    CHECK(scrapgpu_buffer_free(ba) == SCRAPGPU_STATUS_INVALID_ARGUMENT);
+    CHECK(scrapgpu_buffer_free(bd) == SCRAPGPU_STATUS_INVALID_ARGUMENT);
+    std::vector<float> v(64);
+    for (int i = 0; i < 64; ++i) {
+        v[i] = (float) i;
+    }
+    CHECK_OK(scrapgpu_buffer_write(g_stream, ba, 0, v.data(), v.size() * sizeof(float), 1));
+    CHECK_OK(scrapgpu_plan_execute(g_stream, plan));
+    CHECK_OK(scrapgpu_stream_sync(g_stream));
+    std::vector<float> back(64);
+    CHECK_OK(scrapgpu_buffer_read(g_stream, bd, 0, back.data(), back.size() * sizeof(float), 1));
+    for (int i = 0; i < 64; ++i) {
+        CHECK(back[i] == 2.0f * v[i]);
+    }
+    CHECK_OK(scrapgpu_plan_free(plan));
+    CHECK_OK(scrapgpu_buffer_free(ba));
+    CHECK_OK(scrapgpu_buffer_free(bd));
+    std::printf("PASS  %-24s plan->buffer refs, free refused, plan executed, buffers freed\n", "plan buffer lifetime");
+    ++g_run;
+}
+
 // scrapgpu_tensor_copy: bytes must survive the transport exactly, and the copy must be ordered
 // after the work already enqueued on the source stream / before the work enqueued later on the
 // destination stream (docs/API_CONTRACT.md)
@@ -1248,6 +1307,7 @@ int main() {
     CHECK_OK(scrapgpu_stream_create(g_dev, &g_stream));
 
     test_buffer_ops();
+    test_plan_lifetime();
     test_tensor_copy();
     test_binary();
     test_unary_family();

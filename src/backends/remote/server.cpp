@@ -29,6 +29,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <new>
 #include <string>
 #include <unistd.h>
 #include <unordered_map>
@@ -256,6 +257,9 @@ bool handle(uint32_t op, sgr::cur c) {
             if (!sgr::get_u64(c, need)) {
                 return fail(SCRAPGPU_STATUS_INVALID_ARGUMENT, "remote: malformed SHM_ENSURE");
             }
+            if (need > sgr::kMaxShm) {
+                return fail(SCRAPGPU_STATUS_OUT_OF_MEMORY, "remote: the shared memory request exceeds the protocol limit");
+            }
             if (need > 0 && !srv_shm_ensure((size_t) need)) {
                 return fail(SCRAPGPU_STATUS_OUT_OF_MEMORY, "remote: the shared memory could not be grown");
             }
@@ -317,8 +321,12 @@ bool handle(uint32_t op, sgr::cur c) {
             if (it == g_buffers.end()) {
                 return fail(SCRAPGPU_STATUS_INVALID_ARGUMENT, "remote: unknown buffer id");
             }
+            // the backend refuses the free while a live plan references the buffer (audit M-2):
+            // the id must stay valid then — erase it only when the buffer was really freed
             const scrapgpu_status st = scrapgpu_buffer_free(it->second);
-            g_buffers.erase(it);
+            if (st == SCRAPGPU_STATUS_OK) {
+                g_buffers.erase(it);
+            }
             return respond(st, {});
         }
         case SGR_OP_BUFFER_WRITE: {
@@ -367,10 +375,15 @@ bool handle(uint32_t op, sgr::cur c) {
             if (!stream_of(sid, &s) || bad || bid == 0) {
                 return fail(SCRAPGPU_STATUS_INVALID_ARGUMENT, "remote: unknown stream or buffer id");
             }
-            const bool shm = size > 0 && srv_shm_ensure((size_t) size);
+            const bool shm = size > 0 && size <= sgr::kMaxShm && srv_shm_ensure((size_t) size);
             void * dst = shm ? g_shm : nullptr;
             std::vector<uint8_t> heap;
             if (!shm && size > 0) {
+                // bulk data is expected to travel through the shared memory; the inline fallback
+                // stays bounded by the message limit (audit H-2)
+                if (size > sgr::kMaxPayload) {
+                    return fail(SCRAPGPU_STATUS_OUT_OF_MEMORY, "remote: read exceeds the inline limit and the shared memory is unavailable");
+                }
                 heap.resize((size_t) size);
                 dst = heap.data();
             }
@@ -585,10 +598,13 @@ bool handle(uint32_t op, sgr::cur c) {
                 // the backend included), so the shared memory / payload can be recycled on return
                 return respond(scrapgpu_tensor_upload(s, &td, data, (size_t) size), {});
             }
-            const bool shm = size > 0 && srv_shm_ensure((size_t) size);
+            const bool shm = size > 0 && size <= sgr::kMaxShm && srv_shm_ensure((size_t) size);
             void * dst = shm ? g_shm : nullptr;
             std::vector<uint8_t> heap;
             if (!shm && size > 0) {
+                if (size > sgr::kMaxPayload) {
+                    return fail(SCRAPGPU_STATUS_OUT_OF_MEMORY, "remote: download exceeds the inline limit and the shared memory is unavailable");
+                }
                 heap.resize((size_t) size);
                 dst = heap.data();
             }
@@ -755,16 +771,35 @@ int main(int argc, char ** argv) {
         sgr::cur hc{hdr, sgr::kHdrSize};
         uint32_t magic = 0, op = 0;
         uint64_t size = 0;
-        if (!sgr::get_u32(hc, magic) || magic != sgr::kMagic || !sgr::get_u32(hc, op) || !sgr::get_u64(hc, size) ||
-            size > (1ull << 34)) {
+        if (!sgr::get_u32(hc, magic) || magic != sgr::kMagic || !sgr::get_u32(hc, op) || !sgr::get_u64(hc, size)) {
             break;
         }
-        std::vector<uint8_t> payload((size_t) size);
+        if (size > (uint64_t) sgr::kMaxPayload) {
+            // an oversized message would let a client make the server allocate without bound
+            // (audit H-2): answer with an error and close the connection cleanly — the payload
+            // cannot be drained at a bounded cost
+            fail(SCRAPGPU_STATUS_INVALID_ARGUMENT, "remote: request payload exceeds the protocol limit");
+            break;
+        }
+        std::vector<uint8_t> payload;
+        try {
+            payload.resize((size_t) size);
+        } catch (const std::bad_alloc &) {
+            fail(SCRAPGPU_STATUS_OUT_OF_MEMORY, "remote: out of memory for the request payload");
+            break;
+        }
         if (size > 0 && !read_all(g_client, payload.data(), (size_t) size)) {
             break;
         }
         sgr::cur body{payload.empty() ? nullptr : payload.data(), payload.size()};
-        if (!handle(op, body)) {
+        bool alive = true;
+        try {
+            alive = handle(op, body);
+        } catch (const std::bad_alloc &) {
+            // a handler ran out of memory (a response or a decoded plan): report it and keep serving
+            alive = fail(SCRAPGPU_STATUS_OUT_OF_MEMORY, "remote: out of memory");
+        }
+        if (!alive) {
             break;
         }
     }

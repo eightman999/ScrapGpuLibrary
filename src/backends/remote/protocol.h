@@ -30,6 +30,11 @@ constexpr uint32_t kVersion = 1u;
 constexpr size_t   kHdrSize = 16;
 constexpr size_t   kShmInitial = 1u << 20;  // 1 MiB; grown on demand
 constexpr size_t   kMaxTensors = 32;        // sanity bound on serialized input/output counts
+// the biggest single message on the wire (audit H-2): bulk data goes through the shared memory
+// region, so nothing needs a bigger inline payload; both ends check it before allocating
+constexpr size_t   kMaxPayload = 64u << 20; // 64 MiB
+// sanity bound on the shared memory a peer may ask for (no buffer can be bigger than this)
+constexpr uint64_t kMaxShm     = 4ull << 30; // 4 GiB
 
 // 0xFFFFFFFF marks a NULL string / no value on the wire
 constexpr uint32_t kNullStr = 0xFFFFFFFFu;

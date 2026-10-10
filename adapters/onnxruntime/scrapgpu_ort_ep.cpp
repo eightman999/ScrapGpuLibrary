@@ -13,9 +13,11 @@
 #include "scrapgpu/tensor.h"
 
 #include <atomic>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -178,6 +180,7 @@ struct ComputeState {
     int64_t weight_k = 0;
     int64_t weight_n = 0;
     int64_t weight_k_padded = 0;
+    int64_t weight_k_in = 0; // the K of the ONNX weight (weight_k is the padded K for quant)
 
     scrapgpu_buffer_t * scale_buf = nullptr;
     int64_t norm_cols = 0;
@@ -223,6 +226,7 @@ static int64_t pad_dim_to_block(int64_t k, size_t block) {
 scrapgpu_status upload_weight(ScrapGpuEp * ep, ComputeState * st, const float * onnx_weight, int64_t k, int64_t n) {
     st->weight_k = k;
     st->weight_n = n;
+    st->weight_k_in = k;
     st->weight_k_padded = k;
     st->weight_dtype = ep->session_weight_dtype;
     if (st->weight_dtype == SCRAPGPU_DTYPE_F32) {
@@ -430,7 +434,7 @@ OrtStatus * run_rms_norm(ScrapGpuEp * ep, ComputeState * st, const float * x, fl
     const scrapgpu_tensor_desc ins[2] = {tx, scale};
     scrapgpu_op_desc op{};
     op.struct_size = sizeof(op);
-    op.op = SCRAPGPU_OP_RMS_NORM;
+    op.op = SCRAPGPU_OP_RMS_NORM_MUL; // x normalized * scale (RMS_NORM takes a single input)
     op.inputs = ins;
     op.input_count = 2;
     op.outputs = &ty;
@@ -866,6 +870,15 @@ OrtStatus * compile_one(ScrapGpuEp * ep, const OrtGraph * graph, OrtNodeComputeI
             } else {
                 return ort_fail("MatMul bad input rank");
             }
+            // the runtime shape is the contract of the claimed op (audit M-1): the K the
+            // node runs with must be the K the weight was uploaded for, and no dim may be
+            // negative (a symbolic dim that leaked through)
+            if (m < 0 || k < 0) {
+                return ort_fail("MatMul input has an invalid dim");
+            }
+            if (k != st->weight_k_in) {
+                return ort_fail("MatMul input K does not match the weight");
+            }
             std::vector<int64_t> out_dims = ad;
             if (out_dims.size() == 1) {
                 out_dims = {n};
@@ -904,12 +917,21 @@ OrtStatus * compile_one(ScrapGpuEp * ep, const OrtGraph * graph, OrtNodeComputeI
             } else {
                 in1 = in0;
             }
-            std::vector<int64_t> dims;
-            if (!get_ort_value_dims(in0, dims)) {
+            std::vector<int64_t> dims, dims1;
+            if (!get_ort_value_dims(in0, dims) || !get_ort_value_dims(in1, dims1)) {
                 return ort_fail("binary dims");
+            }
+            // the claim compared the *declared* shapes, which can be symbolic: the second
+            // operand's runtime shape must really match the first's before count elements are
+            // read from it (audit M-1)
+            if (!dims_equal(dims, dims1)) {
+                return ort_fail("binary input shapes do not match at run time");
             }
             size_t count = 1;
             for (int64_t d : dims) {
+                if (d < 0 || (d > 0 && count > std::numeric_limits<size_t>::max() / static_cast<size_t>(d))) {
+                    return ort_fail("binary input has an invalid dim");
+                }
                 count *= static_cast<size_t>(d);
             }
             OrtValue * out0 = nullptr;
@@ -942,9 +964,22 @@ OrtStatus * compile_one(ScrapGpuEp * ep, const OrtGraph * graph, OrtNodeComputeI
             if (!get_ort_value_dims(in0, dims) || dims.empty()) {
                 return ort_fail("rmsnorm dims");
             }
+            // the runtime shape is the contract of the claimed op (audit M-1): the last dim must
+            // match the uploaded scale and no dim may be negative
+            for (int64_t d : dims) {
+                if (d < 0) {
+                    return ort_fail("rmsnorm input has an invalid dim");
+                }
+            }
             const int64_t cols = dims.back();
+            if (cols != st->norm_cols) {
+                return ort_fail("rmsnorm last dim does not match the scale");
+            }
             int64_t rows = 1;
             for (size_t i = 0; i + 1 < dims.size(); ++i) {
+                if (dims[i] > 0 && rows > std::numeric_limits<int64_t>::max() / dims[i]) {
+                    return ort_fail("rmsnorm input is too large");
+                }
                 rows *= dims[i];
             }
             OrtValue * out0 = nullptr;

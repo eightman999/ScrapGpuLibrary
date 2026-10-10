@@ -1,5 +1,6 @@
 #include "scrapgpu/backend.h"
 
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -115,6 +116,75 @@ void test_op_validation() {
     validate(SCRAPGPU_OP_TOP_K, &f32, 1, &sort_out, 1, &topk, sizeof(topk));
 }
 
+void test_op_desc_generic_validation() {
+    // audit H-3: every op — the metadata ones included — must be structurally validated before any
+    // early return: a small struct_size, absurd counts and null arrays are refused, so the plan
+    // builders that copy desc.inputs / desc.outputs always see a valid descriptor
+    scrapgpu_tensor_desc f32 = tensor(SCRAPGPU_DTYPE_F32, 8, 4, 1, 1);
+    scrapgpu_tensor_desc out = f32;
+    scrapgpu_op_desc desc{};
+    desc.struct_size = sizeof(desc);
+    desc.op = SCRAPGPU_OP_RESHAPE;
+    desc.inputs = &f32;
+    desc.input_count = 1;
+    desc.outputs = &out;
+    desc.output_count = 1;
+
+    expect_ok(scrapgpu_op_desc_validate(&desc)); // a sane metadata op stays valid
+
+    const scrapgpu_op_desc valid = desc;
+
+    desc = valid;
+    desc.input_count = 1000000; // past the sanity bound even for metadata ops
+    CHECK(scrapgpu_op_desc_validate(&desc) == SCRAPGPU_STATUS_INVALID_ARGUMENT);
+
+    desc = valid;
+    desc.output_count = 1000000;
+    CHECK(scrapgpu_op_desc_validate(&desc) == SCRAPGPU_STATUS_INVALID_ARGUMENT);
+
+    desc = valid;
+    desc.inputs = nullptr; // a null array with a nonzero count (the SIGSEGV of the audit)
+    CHECK(scrapgpu_op_desc_validate(&desc) == SCRAPGPU_STATUS_INVALID_ARGUMENT);
+
+    desc = valid;
+    desc.outputs = nullptr;
+    CHECK(scrapgpu_op_desc_validate(&desc) == SCRAPGPU_STATUS_INVALID_ARGUMENT);
+
+    desc = valid;
+    desc.struct_size = offsetof(scrapgpu_op_desc, inputs); // the inputs/outputs/count fields do not exist
+    CHECK(scrapgpu_op_desc_validate(&desc) == SCRAPGPU_STATUS_INVALID_ARGUMENT);
+
+    desc = valid;
+    desc.params = nullptr;
+    desc.params_size = 16; // a size without a buffer
+    CHECK(scrapgpu_op_desc_validate(&desc) == SCRAPGPU_STATUS_INVALID_ARGUMENT);
+
+    desc = valid;
+    desc.params = &f32;
+    desc.params_size = 4097; // past the sanity bound: the plan builders memcpy params_size bytes
+    CHECK(scrapgpu_op_desc_validate(&desc) == SCRAPGPU_STATUS_INVALID_ARGUMENT);
+
+    desc = valid;
+    desc.params = &f32;
+    desc.params_size = 4096; // at the bound: accepted (the bytes are not read)
+    expect_ok(scrapgpu_op_desc_validate(&desc));
+
+    // the same malformed descriptors on a compute op
+    desc = valid;
+    desc.op = SCRAPGPU_OP_ADD;
+    desc.input_count = 1000000;
+    CHECK(scrapgpu_op_desc_validate(&desc) == SCRAPGPU_STATUS_INVALID_ARGUMENT);
+
+    // a zero input/output count stays acceptable for the metadata ops (they do no work)
+    desc = valid;
+    desc.op = SCRAPGPU_OP_VIEW;
+    desc.inputs = nullptr;
+    desc.outputs = nullptr;
+    desc.input_count = 0;
+    desc.output_count = 0;
+    expect_ok(scrapgpu_op_desc_validate(&desc));
+}
+
 }
 
 int main() {
@@ -181,6 +251,7 @@ int main() {
     CHECK(scrapgpu_tensor_r32_eligible(&r32) == 0);
 
     test_op_validation();
+    test_op_desc_generic_validation();
 
     scrapgpu_unregister_all_backends();
     CHECK(scrapgpu_get_device_count() == 0);

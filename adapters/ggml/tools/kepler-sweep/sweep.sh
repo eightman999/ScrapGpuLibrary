@@ -35,7 +35,8 @@
 #   LLAMA          pristine llama.cpp b11384 with the GGML_BACKEND_DL=ON build in $LLAMA/build-dl (~/bench/scrapgpu/llama.cpp)
 #   BASE_PLUGIN    the plugin of main, the "before" of the bench stage (~/bench/scrapgpu/build-cl11/libggml-cl11.so; skipped if missing)
 #   MODEL_Q8       Qwen3-0.6B-Q8_0.gguf (searched in ~/bench/*/ and ~/models/);  MODEL_Q4K  Qwen3-0.6B-Q4_K_M.gguf (optional)
-#   REF_Q8         the CPU output of the greedy test (/tmp/cl11_out_none.txt)
+#   REF_Q8         the CPU output of the greedy test ($ROOT/sweep-out/cl11_out_none.txt; a stable path in the
+#                  checkout, not /tmp: a predictable name in a shared directory is a symlink hazard)
 #   GPUS           comma separated substrings of the OpenCL device names ("GT 730,GT 710,GT 430")
 #   STAGES         ("build test greedy mm bench dn regress summary")
 #   DN_GPUS        the GPUs of the dn stages ("GT 430"; the denormal products are tuned for Fermi, other GPUs run the same comparison as a control)
@@ -74,7 +75,7 @@ BIN=${BIN:-$ROOT/sweep-bin}
 JOBS=${JOBS:-2}
 BENCH_REPS=${BENCH_REPS:-3}
 BENCH_TOP=${BENCH_TOP:-3}
-REF_Q8=${REF_Q8:-/tmp/cl11_out_none.txt}
+REF_Q8=${REF_Q8:-$ROOT/sweep-out/cl11_out_none.txt}
 MM_VARIANTS=${MM_VARIANTS:-"base x84 x84p x88 x88w x88s x88k x88d x164 x168 x168s x168w x88g x88,ku=4 x88,maxrreg=128 x88,maxrreg=168 x168,maxrreg=168 x88w,pf=2"}
 TEST_VARIANTS=${TEST_VARIANTS:-$(for v in $MM_VARIANTS; do [ "$v" = base ] || printf '%s ' "$v"; done)}
 GREEDY_VARIANTS=${GREEDY_VARIANTS:-"x88 x164 x168 x88k x88d"}
@@ -194,12 +195,12 @@ stage_test() {
         local cfg lf
         for cfg in default fused; do
             lf="$OUT/logs/test_${g}_${cfg}.log"
-            run_gpu "$gpu" "$(cfg_env $cfg "$gpu")" "$LLAMA_BIN/test-backend-ops" test -b CL11_0 > "$lf" 2>&1
+            run_gpu "$gpu" "$(cfg_env "$cfg" "$gpu")" "$LLAMA_BIN/test-backend-ops" test -b CL11_0 > "$lf" 2>&1
             test_row "$gpu" "test-backend-ops $cfg" "$lf"
         done
         for cfg in default fused; do
             lf="$OUT/logs/test_${g}_mvm_check_${cfg}.log"
-            run_gpu "$gpu" "$(cfg_env $cfg "$gpu")" "$BIN/mvm_check" > "$lf" 2>&1
+            run_gpu "$gpu" "$(cfg_env "$cfg" "$gpu")" "$BIN/mvm_check" > "$lf" 2>&1
             echo "$gpu,mvm_check $cfg,$(grep -c ' OK$' "$lf"),$(grep -cE ' (OK|BAD)$' "$lf")" >> "$OUT/test.csv"
             log "test $gpu mvm_check $cfg: $(grep -c ' OK$' "$lf") OK, $(grep -c 'BAD$' "$lf") BAD"
         done
@@ -324,16 +325,16 @@ stage_dn_test() {
         g=$(safe "$gpu")
         for cfg in dn nodn; do
             lf="$OUT/logs/dn_test_${g}_${cfg}_mulmat.log"
-            run_gpu "$gpu" "$(cfg_env $cfg "$gpu")" "$LLAMA_BIN/test-backend-ops" test -b CL11_0 -o MUL_MAT > "$lf" 2>&1
+            run_gpu "$gpu" "$(cfg_env "$cfg" "$gpu")" "$LLAMA_BIN/test-backend-ops" test -b CL11_0 -o MUL_MAT > "$lf" 2>&1
             test_row "$gpu" "MUL_MAT $cfg" "$lf"
             lf="$OUT/logs/dn_test_${g}_${cfg}_full.log"
-            run_gpu "$gpu" "$(cfg_env $cfg "$gpu")" "$LLAMA_BIN/test-backend-ops" test -b CL11_0 > "$lf" 2>&1
+            run_gpu "$gpu" "$(cfg_env "$cfg" "$gpu")" "$LLAMA_BIN/test-backend-ops" test -b CL11_0 > "$lf" 2>&1
             test_row "$gpu" "test-backend-ops $cfg (all ops)" "$lf"
             lf="$OUT/logs/dn_test_${g}_${cfg}_mvm_check.log"
-            run_gpu "$gpu" "$(cfg_env $cfg "$gpu")" "$BIN/mvm_check" > "$lf" 2>&1
+            run_gpu "$gpu" "$(cfg_env "$cfg" "$gpu")" "$BIN/mvm_check" > "$lf" 2>&1
             echo "$gpu,mvm_check $cfg,$(grep -c ' OK$' "$lf"),$(grep -cE ' (OK|BAD)$' "$lf")" >> "$OUT/test.csv"
             lf="$OUT/logs/dn_test_${g}_${cfg}_attn_check.log"
-            run_gpu "$gpu" "$(cfg_env $cfg "$gpu")" "$BIN/attn_check" > "$lf" 2>&1
+            run_gpu "$gpu" "$(cfg_env "$cfg" "$gpu")" "$BIN/attn_check" > "$lf" 2>&1
             echo "$gpu,attn_check $cfg,$(grep -c ' OK$' "$lf"),$(grep -cE ' (OK|BAD)$' "$lf")" >> "$OUT/test.csv"
         done
     done
@@ -352,7 +353,7 @@ stage_dn_mv() {
         done
         for cfg in dn nodn; do
             lf="$OUT/logs/dn_mv_${g}_${cfg}.csv"
-            run_gpu "$gpu" "$(cfg_env $cfg "$gpu")" "$BIN/mm_bench" "${jobs[@]}" > "$lf" 2> "$lf.err"
+            run_gpu "$gpu" "$(cfg_env "$cfg" "$gpu")" "$BIN/mm_bench" "${jobs[@]}" > "$lf" 2> "$lf.err"
             "$HERE/summarize.py" mvgbs "$lf" "$gpu" "$cfg" >> "$OUT/dn_mv.csv"
             log "dn_mv $gpu $cfg: $(wc -l < "$lf") results"
         done
@@ -411,7 +412,7 @@ stage_dn_kl() {
         for cfg in dn nodn; do
             lf="$OUT/logs/kl_${g}_${cfg}.log"
             # shellcheck disable=SC2086
-            run_gpu "$gpu" "$(cfg_env $cfg "$gpu")" "$LLAMA_BIN/llama-perplexity" $(devargs_for "$gpu") -m "$MODEL_Q4K" -f "$text" -c 512 --chunks 8 $KL_ARGS -ngl 99 \
+            run_gpu "$gpu" "$(cfg_env "$cfg" "$gpu")" "$LLAMA_BIN/llama-perplexity" $(devargs_for "$gpu") -m "$MODEL_Q4K" -f "$text" -c 512 --chunks 8 $KL_ARGS -ngl 99 \
                 --kl-divergence-base "$base" --kl-divergence > "$lf" 2>&1
             echo "$gpu,q4_k_m,$cfg,$("$HERE/summarize.py" kl "$lf")" >> "$OUT/kl.csv"
             log "dn_kl $gpu $cfg: $(tail -1 "$OUT/kl.csv")"

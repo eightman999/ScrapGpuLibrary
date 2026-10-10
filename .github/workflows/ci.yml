@@ -1,0 +1,29 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  core-sanitize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (core only, sanitizers)
+        run: >
+          cmake -S . -B _w/ci
+          -DSCRAPGPU_BUILD_CORE=ON
+          -DSCRAPGPU_BUILD_TESTS=ON
+          -DSCRAPGPU_SANITIZE=ON
+          -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build
+        run: cmake --build _w/ci -j
+
+      # No GPU on the runners: the device tests report SKIP (ctest treats exit code 77 as skipped).
+      - name: Test (ASan / UBSan)
+        run: ctest --test-dir _w/ci --output-on-failure
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1

@@ -286,7 +286,12 @@ scrapgpu_status exec_unary(scrapgpu_op op, const RTensor & s, const WTensor & d,
     if (!same_ne(s, d)) {
         return ref_invalid("unary-like op: src0 must have the shape of dst");
     }
-    for (int64_t idx = 0; idx < d.ne(0) * d.ne(1) * d.ne(2) * d.ne(3); ++idx) {
+    const int64_t dne[4] = { d.ne(0), d.ne(1), d.ne(2), d.ne(3) };
+    int64_t nd = 0;
+    if (!nelements_ok(dne, &nd)) {
+        return ref_invalid("unary-like op: the element count overflows");
+    }
+    for (int64_t idx = 0; idx < nd; ++idx) {
         int64_t r = idx;
         const int64_t i0 = r % d.ne(0);
         r /= d.ne(0);
@@ -697,6 +702,12 @@ scrapgpu_status exec_set_rows(const RTensor & s0, const RTensor & ids, const WTe
     if (s0.ne(0) != d.ne(0) || s0.ne(2) != d.ne(2) || s0.ne(3) != d.ne(3) || d.ne(1) < 1) {
         return ref_invalid("SET_ROWS: dst must match src0 except along dim 1");
     }
+    // the indices are read as ids[i1, i2 % ne(1), i3 % ne(2)]: the tensor must cover the rows of
+    // src0 (audit H-4: a shorter index tensor was read out of bounds)
+    if (ids.ne(0) < s0.ne(1) || ids.ne(1) < 1 || ids.ne(2) < 1 ||
+        s0.ne(2) % ids.ne(1) != 0 || s0.ne(3) % ids.ne(2) != 0) {
+        return ref_invalid("SET_ROWS: the index tensor does not cover the rows of src0");
+    }
     for (int64_t i3 = 0; i3 < s0.ne(3); ++i3) {
         for (int64_t i2 = 0; i2 < s0.ne(2); ++i2) {
             for (int64_t i1 = 0; i1 < s0.ne(1); ++i1) {
@@ -774,6 +785,9 @@ scrapgpu_status exec_mul_mat(const RTensor & s0, const RTensor & s1, const WTens
     }
     if (s1.nb(0) != s1.esz() || d.nb(0) != d.esz()) {
         return ref_unsupported("MUL_MAT needs contiguous rows of src1 and dst (nb0 == element size)");
+    }
+    if (s0.ne(2) < 1 || s0.ne(3) < 1) {
+        return ref_invalid("MUL_MAT: src0 must have at least one slice");
     }
     const int64_t r2 = s1.ne(2) / s0.ne(2);
     const int64_t r3 = s1.ne(3) / s0.ne(3);

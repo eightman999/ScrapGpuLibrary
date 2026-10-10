@@ -35,6 +35,7 @@ inline size_t dtype_type_size(scrapgpu_dtype dtype) {
         case SCRAPGPU_DTYPE_Q8_0: return 34;
         case SCRAPGPU_DTYPE_Q4_K: return 144;
         case SCRAPGPU_DTYPE_Q6_K: return 210;
+        case SCRAPGPU_DTYPE_UNKNOWN: break;
     }
     return 0;
 }
@@ -104,6 +105,39 @@ inline int64_t dim_or_one(int64_t ne) {
     return ne == 0 ? 1 : ne;
 }
 
+// a * b saturated to the int64 range instead of wrapping (audit M-4: a wrapped product passes the
+// size limits — fits_int32, the kernel launch margin — or makes nbytes smaller than the tensor)
+inline int64_t mul_sat_i64(int64_t a, int64_t b) {
+    const int64_t lo = std::numeric_limits<int64_t>::min();
+    const int64_t hi = std::numeric_limits<int64_t>::max();
+    if (a > 0) {
+        if (b > 0) {
+            return a > hi / b ? hi : a * b;
+        }
+        if (b < 0) {
+            return b < lo / a ? lo : a * b;
+        }
+        return 0;
+    }
+    if (a < 0) {
+        if (b < 0) {
+            return a < hi / b ? hi : a * b;
+        }
+        if (b > 0) {
+            return a < lo / b ? lo : a * b;
+        }
+    }
+    return 0;
+}
+
+inline uint64_t mul_sat_u64(uint64_t a, uint64_t b) {
+    return a != 0 && b > std::numeric_limits<uint64_t>::max() / a ? std::numeric_limits<uint64_t>::max() : a * b;
+}
+
+inline uint64_t add_sat_u64(uint64_t a, uint64_t b) {
+    return b > std::numeric_limits<uint64_t>::max() - a ? std::numeric_limits<uint64_t>::max() : a + b;
+}
+
 // contiguous desc of `ne` elements (a dim <= 0 counts as 1): nb[0] = type size, nb[1] = the bytes of
 // a row (whole blocks), nb[i] = nb[i-1] * ne[i-1]
 inline TensorDesc make_contiguous(scrapgpu_dtype dtype, const int64_t ne[4], scrapgpu_layout layout = SCRAPGPU_LAYOUT_NATURAL) {
@@ -115,13 +149,18 @@ inline TensorDesc make_contiguous(scrapgpu_dtype dtype, const int64_t ne[4], scr
         d.ne[i] = ne[i];
     }
     d.nb[1] = row_size(dtype, dim_or_one(ne[0]));
-    d.nb[2] = d.nb[1] * (uint64_t) dim_or_one(ne[1]);
-    d.nb[3] = d.nb[2] * (uint64_t) dim_or_one(ne[2]);
+    d.nb[2] = mul_sat_u64(d.nb[1], (uint64_t) dim_or_one(ne[1]));
+    d.nb[3] = mul_sat_u64(d.nb[2], (uint64_t) dim_or_one(ne[2]));
     return d;
 }
 
+// the product of the dims, saturated instead of wrapping (a dim of 0 gives 0)
 inline int64_t nelements(const TensorDesc & d) {
-    return d.ne[0] * d.ne[1] * d.ne[2] * d.ne[3];
+    int64_t n = 1;
+    for (int i = 0; i < kMaxDims; ++i) {
+        n = mul_sat_i64(n, d.ne[i]);
+    }
+    return n;
 }
 
 // the number of bytes a tensor touches in its storage (the offset of the last byte + 1): the ggml
@@ -141,12 +180,12 @@ inline uint64_t nbytes(const TensorDesc & d) {
     if (block_size == 1) {
         n = type_size;
         for (int i = 0; i < kMaxDims; ++i) {
-            n += (uint64_t) (d.ne[i] - 1) * d.nb[i];
+            n = add_sat_u64(n, mul_sat_u64((uint64_t) (d.ne[i] - 1), d.nb[i]));
         }
     } else {
-        n = (uint64_t) d.ne[0] * d.nb[0] / block_size;
+        n = mul_sat_u64((uint64_t) d.ne[0], d.nb[0]) / block_size;
         for (int i = 1; i < kMaxDims; ++i) {
-            n += (uint64_t) (d.ne[i] - 1) * d.nb[i];
+            n = add_sat_u64(n, mul_sat_u64((uint64_t) (d.ne[i] - 1), d.nb[i]));
         }
     }
     return n;
@@ -163,14 +202,17 @@ inline bool is_contiguous(const TensorDesc & d) {
     if (d.ne[0] != (int64_t) block_size && d.nb[0] != next) {
         return false;
     }
+    // the expected stride product must not wrap: a wrapped `next` could equal a crafted nb
+    bool overflow = next != 0 && (uint64_t) (d.ne[0] / (int64_t) block_size) > std::numeric_limits<uint64_t>::max() / next;
     next *= (uint64_t) (d.ne[0] / (int64_t) block_size);
     for (int i = 1; i < kMaxDims; ++i) {
         if (d.ne[i] != 1 && d.nb[i] != next) {
             return false;
         }
+        overflow |= next != 0 && (uint64_t) d.ne[i] > std::numeric_limits<uint64_t>::max() / next;
         next *= (uint64_t) d.ne[i];
     }
-    return true;
+    return !overflow;
 }
 
 // the strict definition of the public API: every stride is exactly the canonical contiguous stride
@@ -293,8 +335,15 @@ inline bool r32_eligible(const TensorDesc & d) {
     if (!dtype_is_repackable(d.dtype) || !is_contiguous(d)) {
         return false;
     }
-    // the slices must keep the 16-byte alignment of the 128-bit loads
-    return d.ne[2] * d.ne[3] == 1 || (d.nb[2] % 16 == 0 && d.nb[3] % 16 == 0);
+    // the row must hold whole blocks: a partial-block row gives a geometry with nb == 0 and a
+    // division by zero in the transfer (audit H-5)
+    const size_t block_size = dtype_block_size(d.dtype);
+    if (d.ne[0] <= 0 || (uint64_t) d.ne[0] % block_size != 0) {
+        return false;
+    }
+    // the slices must keep the 16-byte alignment of the 128-bit loads (a single slice has no
+    // slice strides to address)
+    return (d.ne[2] == 1 && d.ne[3] == 1) || (d.nb[2] % 16 == 0 && d.nb[3] % 16 == 0);
 }
 
 // The bytes of a block of the natural layout are split into up to 3 areas, one after the other in

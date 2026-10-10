@@ -89,6 +89,19 @@ def main() -> int:
     y_rope_ref = torch.ops.scrapgpu.ref_rope(xr, pos, hd, 128, 10000.0, 1.0, 0.0, 1.0, 32.0, 1.0, 0)
     results["rope"] = nmse(y_rope, y_rope_ref)
 
+    # --- zero-sized tensors must not crash (audit M-3: numel() / size(-1) divided by zero) ---
+    e = torch.empty(0)
+    results["add_empty"] = float(torch.ops.scrapgpu.add(e, e).numel() != 0)
+    results["silu_empty"] = float(torch.ops.scrapgpu.silu(e).numel() != 0)
+    results["rms_norm_empty"] = float(torch.ops.scrapgpu.rms_norm(e, e, 1e-5).numel() != 0)
+    e3 = torch.empty(3, 0)
+    results["add_empty_inner"] = float(torch.ops.scrapgpu.add(e3, e3).numel() != 0)
+    xe = torch.empty(0, 0, 0)
+    pe = torch.empty(0, dtype=torch.int32)
+    results["rope_empty"] = float(
+        torch.ops.scrapgpu.rope(xe, pe, 0, 128, 10000.0, 1.0, 0.0, 1.0, 32.0, 1.0, 0).numel() != 0
+    )
+
     limit = 1e-6
     failed = []
     for name, v in results.items():
