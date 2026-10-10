@@ -30,7 +30,7 @@ Gate 2 の判定は **Go**（2026-10-09、`ccde9c3`）。TB250 の 6 構成す�
 
 Phase 3 に持ち越した点は 2 つあります。バックエンド側のエラー出力が ggml のログではなく `stderr` に出ること（ログのコールバックを入れる）、`install-in-tree.sh` が別の git リポジトリの中のディレクトリーに対してパッチを「適用済み」と誤判定すること（分割前からの挙動）です。
 
-## P3 tensor / ops / quant の切り出しと C API — 実施中
+## P3 tensor / ops / quant の切り出しと C API — 済み（Gate 3、2026-10-10）
 
 ggml を使わずに C API だけでテンソル演算を GPU で実行できる状態にします。ggml adapter は、同じ演算の実装を呼ぶ翻訳層になります（[docs/plans/PHASE3_STANDALONE.md](docs/plans/PHASE3_STANDALONE.md)）。
 
@@ -43,10 +43,10 @@ ggml を使わずに C API だけでテンソル演算を GPU で実行できる
 | --- | --- | --- |
 | S1 | デバイスの実行時の状態（context、queue、プログラム、カーネル、調整値、定数サブバッファ、作業用バッファ、実行の状態）をバックエンドの `cl11_device` に移す。ggml のデバイスは `cl11_device` を指すだけにする | `src/backends/opencl11/device_state.*`、`ggml-cl11.cpp`（済み） |
 | S2 | ggml に依存しない tensor モジュール（Phase 3.1）。TensorDesc・dtype・layout・ビュー・ブロードキャスト・除算なしの添字・R32 の配置を `src/tensor/` に、カーネルに渡す記述子を `src/backends/opencl11/tensor_abi.h` に。adapter は変換だけ | `src/tensor/*`、`src/backends/opencl11/tensor_abi.h`（済み） |
-| S3 | R32 の詰め替え（pack / unpack / 部分転送）をバックエンドへ | `src/backends/opencl11/r32.*` |
-| S4 | 演算（`cl11_op_*`）と対応判定の ggml に依存しない部分をバックエンドへ | `src/backends/opencl11/ops.*` |
-| S5 | 公開 API：stream、`scrapgpu_opencl11_register`（vtable の実装）、`scrapgpu_op_execute`、`scrapgpu_tensor_upload / download`、`op_supported`、1 演算 1 ノードの plan | `include/scrapgpu/*.h`、`src/core/*`、`src/backends/opencl11/api.cpp` |
-| S6 | CPU 参照実装（全演算と Q4_0 / Q8_0 / Q4_K / Q6_K の逆量子化）と、演算ごとの単体試験（GPU と参照を NMSE で比べる）。ggml を使わない例（`examples/standalone_matmul.c`） | `src/core/ref/*`（CPU 参照実装と試験は済み。ggml の CPU と 112 ケース一致、`adapters/ggml/tools/ref_check`）、`tests/ops/*`、`examples/*` |
+| S3 | R32 の詰め替え（pack / unpack / 部分転送）をバックエンドへ | `src/backends/opencl11/r32.*`（済み） |
+| S4 | 演算（`cl11_op_*`）と対応判定の ggml に依存しない部分をバックエンドへ | `src/backends/opencl11/ops*.*`（済み） |
+| S5 | 公開 API：stream、`scrapgpu_opencl11_register`（vtable の実装）、`scrapgpu_op_execute`、`scrapgpu_tensor_upload / download`、`op_supported`、1 演算 1 ノードの plan | `include/scrapgpu/*.h`、`src/core/*`、`src/backends/opencl11/api.cpp`（済み） |
+| S6 | CPU 参照実装（全演算と Q4_0 / Q8_0 / Q4_K / Q6_K の逆量子化）と、演算ごとの単体試験（GPU と参照を NMSE で比べる）。ggml を使わない例（`examples/standalone_matmul.c`） | `src/core/ref/*`（CPU 参照実装と試験は済み。ggml の CPU と 112 ケース一致、`adapters/ggml/tools/ref_check`）、`tests/ops/*`、`examples/*`（済み） |
 
 1 段階 1 コミットです。S6 の CPU 参照実装は S1〜S5 と独立しているので並行して作れます。各段階で、`-Wall -Wextra` で警告のないビルド、`test-backend-ops` の 3 調整（既定・`FORCE_GEN=kepler`・`fermi`）、`mvm_check` 18 / 18、`attn_check` 8 / 8、`ctest`、`clBuildProgram` のソースとオプションの不変、`src/backends/opencl11`・`src/core`・`include/scrapgpu`・`tests/ops`・`examples` に ggml の include がないことを確認します。
 
@@ -115,7 +115,7 @@ adapter ごとに試験を定めます。リポジトリへの取り込み可否
 
 **P2 (done).** The OpenCL 1.1 runtime lives in `src/backends/opencl11/` (device, context, kernels, buffer, executor) with no ggml includes; the adapter still owns the ggml API, op dispatch, fusion planning and the R32 transfer until Phase 3. Gate 2 (2026-10-09, `ccde9c3`): **Go** — all six TB250 configurations are inside the baseline (NVIDIA between -0.9% and +0.3% against a ±3% target), with the same launches per token, `test-backend-ops` and greedy results as before the split. Carried into Phase 3: backend error output goes to `stderr` instead of the ggml log, and `install-in-tree.sh` still misjudges a patch as applied when it runs against a directory inside another git repository.
 
-**P3 (in progress).** Tensor / ops / quant and a C API that works without ggml, in six steps S1-S6 (device runtime state, `cl11_tensor` and descriptors, the R32 packing, the ops and their support logic, the public API, then the CPU reference implementation, the per-op unit tests and a ggml-free example). S6 is independent of S1-S5 and can run in parallel. Gate 3: the Gate 2 TB250 regression plus the ggml-free tests and examples on the six TB250 configurations and on a Mac.
+**P3 (done, Gate 3 on 2026-10-10).** Tensor / ops / quant and a C API that works without ggml, in six steps S1-S6 (device runtime state, `cl11_tensor` and descriptors, the R32 packing, the ops and their support logic, the public API, then the CPU reference implementation, the per-op unit tests and a ggml-free example). S6 is independent of S1-S5 and can run in parallel. Gate 3: the Gate 2 TB250 regression plus the ggml-free tests and examples on the six TB250 configurations and on a Mac.
 
 **P4 (not started).** Multi-GPU transport as a pipeline split. All five GPUs of the test machine are on PCIe x1 with about 0.40 GB/s through the host; per-layer splitting moves only activations (about 16KB and 40µs per token and hop for a 4096-wide FP32 hidden layer), and the roughly 10GB of total VRAM could hold an 8B model on GPUs. Open: NVIDIA 390 failing to open a second GPU in one process (seen with pyopencl, not verified through the C API), shared-memory transport with one process per device, and the mixed NVIDIA-OpenCL / AMD-Vulkan setup the broken NVIDIA 390 Vulkan ICD forces.
 

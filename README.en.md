@@ -25,7 +25,7 @@ The first result is CL11, a ggml backend that runs on OpenCL 1.1 alone. Version 
 | P0 | The CL11 ggml backend, per-GPU tuning, the out-of-tree plugin | Done. Gate 0 fixed the speed and correctness baselines ([docs/BASELINES.md](docs/BASELINES.md)) |
 | P1 | Integration of the per-GPU tuning, fixed performance baselines and correctness tolerances | Done (Gate 1). The contract is [docs/API_CONTRACT.md](docs/API_CONTRACT.md). KL divergence tolerances are calibrated per model and text against the official backends |
 | P2 | Splitting out the runtime and `backends/opencl11` | Done (Gate 2, 2026-10-09). device / context / kernels / buffer / executor moved into `src/backends/opencl11/` with no ggml includes. All six TB250 configurations are within the baseline (NVIDIA between -0.9% and +0.3%), and the launches per token, `test-backend-ops` and the greedy agreement are the same as before the split |
-| P3 | Splitting out tensor / ops / quant and a C API callable without ggml | In progress ([docs/plans/PHASE3_STANDALONE.md](docs/plans/PHASE3_STANDALONE.md)) |
+| P3 | Splitting out tensor / ops / quant and a C API callable without ggml | Done (Gate 3, 2026-10-10). GPU tensor ops run through the public C API alone (`examples/standalone_matmul.c`); the ggml-free op tests pass on all six TB250 configurations and the regression stays within the baseline |
 | P4 | multi-GPU transport | Not started |
 | P5 | More backends (opencl12 / vulkan / cuda) and adapters (PyTorch / ONNX Runtime) | Not started |
 
