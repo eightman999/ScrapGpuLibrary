@@ -18,7 +18,7 @@ The responsibilities of each layer, the direction of the dependencies, the desig
 
 ## Status
 
-The first result is CL11, a ggml backend that runs on OpenCL 1.1 alone. Version 0.2 splits the single file that held every layer into runtime / backends / core / adapter (see [docs/plans/V0.2_SPLIT_BRIEF.md](docs/plans/V0.2_SPLIT_BRIEF.md)). `main` still holds the implementation from before the split.
+The first result is CL11, a ggml backend that runs on OpenCL 1.1 alone. Version 0.2 splits the single file that held every layer into runtime / backends / core / adapter (see [docs/plans/V0.2_SPLIT_BRIEF.md](docs/plans/V0.2_SPLIT_BRIEF.md)). The current `main` contains the implementation split through P3. The ggml adapter still retains compatibility translation code; multi-GPU transport and the PyTorch / ONNX Runtime adapters are not implemented yet.
 
 | Stage | Content | State |
 | --- | --- | --- |
@@ -30,6 +30,38 @@ The first result is CL11, a ggml backend that runs on OpenCL 1.1 alone. Version 
 | P5 | More backends (opencl12 / vulkan / cuda) and adapters (PyTorch / ONNX Runtime) | Not started |
 
 [ROADMAP.md](ROADMAP.md) collects what comes next.
+
+### Quick start
+
+**1. Build the core and CPU reference tests (no llama.cpp or OpenCL required)**
+
+Requires CMake 3.14+ and a C/C++ toolchain with C++17 support.
+
+```bash
+git clone https://github.com/eightman999/ScrapGpuLibrary.git
+cd ScrapGpuLibrary
+cmake -S . -B build -DSCRAPGPU_BUILD_TESTS=ON
+cmake --build build -j
+ctest --test-dir build --output-on-failure
+```
+
+**2. Try the OpenCL 1.1 backend and standalone C API example**
+
+Install OpenCL headers, an ICD loader, and an OpenCL implementation for your device first.
+
+```bash
+cmake -S . -B build-opencl \
+  -DSCRAPGPU_BUILD_OPENCL11=ON \
+  -DSCRAPGPU_BUILD_EXAMPLES=ON \
+  -DSCRAPGPU_BUILD_TESTS=ON
+cmake --build build-opencl -j
+ctest --test-dir build-opencl --output-on-failure
+./build-opencl/scrapgpu_standalone_matmul
+```
+
+The example uses **only the public C API, without ggml / llama.cpp**: it uploads Q4_0 weights in an R32 GPU layout, executes `MUL_MAT`, and compares the result with the CPU reference using NMSE. If no OpenCL device is found, the example exits without performing a GPU operation. GPU tests are also skipped when no device is available; **a successful test exit alone does not prove that GPU execution was verified**.
+
+For llama.cpp integration, follow the [ggml adapter instructions](adapters/ggml/) (targeting llama.cpp b11384). See [docs/BASELINES.md](docs/BASELINES.md) and [docs/CL11.md](docs/CL11.md) for measured performance and supported operations.
 
 ### Where the code lives
 
@@ -57,6 +89,8 @@ ctest --test-dir build
 | `SCRAPGPU_BUILD_CORE` | `ON` | The common layer that uses neither ggml nor OpenCL (`scrapgpu_core`) |
 | `SCRAPGPU_BUILD_OPENCL11` | `OFF` | The OpenCL 1.1 backend (`scrapgpu_opencl11`). Defines `CL_TARGET_OPENCL_VERSION=110` |
 | `SCRAPGPU_BUILD_GGML_ADAPTER` | `OFF` | The ggml adapter. `ON` adds `adapters/ggml` |
+| `SCRAPGPU_BUILD_EXAMPLES` | OPENCL11 と同じ | ggml なしの C API サンプル。OpenCL11 が必要 |
+| `SCRAPGPU_BUILD_EXAMPLES` | Same as OPENCL11 | Standalone C API example; requires OpenCL11 |
 | `SCRAPGPU_BUILD_TESTS` | `ON` | The contract tests and the dependency check |
 
 - `ctest` runs the contract tests and the check that `src/core` and the public headers include neither ggml nor OpenCL, and `src/backends/opencl11` includes no ggml (`cmake/check_core_dependencies.cmake`).
