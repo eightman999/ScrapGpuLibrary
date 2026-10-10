@@ -4,6 +4,7 @@ project(ScrapGpuLibrary C CXX)
 option(SCRAPGPU_BUILD_CORE "Build the ScrapGpu core library without ggml or OpenCL" ON)
 option(SCRAPGPU_BUILD_OPENCL11 "Build the OpenCL 1.1 backend (Phase 2)" OFF)
 option(SCRAPGPU_BUILD_GGML_ADAPTER "Build the existing ggml CL11 adapter" OFF)
+option(SCRAPGPU_BUILD_ORT_EP "Build the ONNX Runtime plugin execution provider" OFF)
 option(SCRAPGPU_BUILD_TESTS "Build ScrapGpu contract tests" ON)
 option(SCRAPGPU_BUILD_EXAMPLES "Build the examples (needs SCRAPGPU_BUILD_OPENCL11)" ${SCRAPGPU_BUILD_OPENCL11})
 
@@ -79,6 +80,10 @@ endif()
 
 if (SCRAPGPU_BUILD_GGML_ADAPTER)
     add_subdirectory(adapters/ggml)
+endif()
+
+if (SCRAPGPU_BUILD_ORT_EP)
+    add_subdirectory(adapters/onnxruntime)
 endif()
 
 if (SCRAPGPU_BUILD_TESTS AND SCRAPGPU_BUILD_CORE)
