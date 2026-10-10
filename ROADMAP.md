@@ -82,6 +82,8 @@ ggml を使わずに C API だけでテンソル演算を GPU で実行できる
 
 adapter ごとに試験を定めます。リポジトリへの取り込み可否と条件は [docs/REUSE.md](docs/REUSE.md) のとおりです。
 
+**実施状況（2026-10-10）**：Vulkan バックエンドの最初の段階（`src/backends/vulkan`、AMD の RADV で加算・乗算・RMS_NORM・F32 / F16 / Q4_0 / Q8_0 の行列積、TB250 の RX 6400 と WX 2100 で全件通過）、PyTorch adapter の Stage A（`adapters/pytorch`、`torch.ops.scrapgpu.*`）、ONNX Runtime のプラグイン EP（`adapters/onnxruntime`、MatMul・Add・Mul）。CUDA は sudo でのドライバ切り替えが要るので対象外。opencl12 は未着手。
+
 ## 既知のリスクと未決
 
 ### 構造とビルド（[docs/MIGRATION_PLAN.md](docs/MIGRATION_PLAN.md) 6 章）
