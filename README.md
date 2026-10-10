@@ -18,7 +18,7 @@ ScrapGpuLibrary
 
 ## 現状
 
-最初の成果は、OpenCL 1.1 だけで動く ggml backend「CL11」です。v0.2 では、1 つのファイルに全層が同居していた実装を、runtime / backends / core / adapter に切り出しています（[docs/plans/V0.2_SPLIT_BRIEF.md](docs/plans/V0.2_SPLIT_BRIEF.md)）。現在の `main` には P3 までの分離済み実装があります。ggml adapter は引き続き互換性のための翻訳層を持ち、複数 GPU 間の transport や PyTorch / ONNX Runtime adapter は未実装です。
+最初の成果は、OpenCL 1.1 だけで動く ggml backend「CL11」です。v0.2 では、1 つのファイルに全層が同居していた実装を、runtime / backends / core / adapter に切り出しています（[docs/plans/V0.2_SPLIT_BRIEF.md](docs/plans/V0.2_SPLIT_BRIEF.md)）。現在の `main` には P3 までの分離済み実装と、P4（複数 GPU）・P5（Vulkan バックエンド、PyTorch / ONNX Runtime adapter）の最初の段階があります。ggml adapter は引き続き互換性のための翻訳層を持ちます。
 
 | 段階 | 内容 | 状態 |
 | --- | --- | --- |
@@ -38,7 +38,7 @@ ScrapGpuLibrary
 CMake 3.14 以降と C/C++ コンパイラ（C++17）が必要です。
 
 ```bash
-git clone https://github.com/eightman999/ScrapGpuLibrary.git
+git clone https://github.com/jimoto-no-llm/ScrapGpuLibrary.git
 cd ScrapGpuLibrary
 cmake -S . -B build -DSCRAPGPU_BUILD_TESTS=ON
 cmake --build build -j
