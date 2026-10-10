@@ -20,6 +20,14 @@ static bool cl11_op_mul_mat_id_sync(cl11_device * c, const cl11_tensor & vd, con
     const int64_t K = v0.d.ne[0], M = v0.d.ne[1], n_exp = v0.d.ne[2];
     const int64_t n_used = vi.d.ne[0], n_tok = vi.d.ne[1];
     const int64_t P = n_used * n_tok;
+    // the scratch products below must not wrap (the same bound as cl11_supports_mul_mat_id,
+    // defensively — audit M-4)
+    if (P < 0 || sgt::mul_sat_u64((uint64_t) P,
+                     sgt::mul_sat_u64((uint64_t) std::max<int64_t>(std::max(K, M), 0),
+                                      (uint64_t) sizeof(float))) > cl11_max_buffer_size(c->info)) {
+        fprintf(stderr, "%s: the pair scratch does not fit the buffer limit\n", __func__);
+        return false;
+    }
 
     const cl11_tref s1 = cl11_tref_of(v1), d = cl11_tref_of(vd), ir = cl11_tref_of(vi);
 
@@ -178,6 +186,9 @@ static int cl11_op_mul_mat_id_gen(cl11_device * c, const cl11_tensor & vd, const
 }
 
 bool cl11_op_mul_mat_id(cl11_device * c, const cl11_tensor & dst, const cl11_tensor & s0, const cl11_tensor & s1, const cl11_tensor & ids) {
+    if (ids.d.ne[0] <= 0 || ids.d.ne[1] <= 0) {
+        return true; // an empty id set writes nothing (a 0-size launch would be a driver error)
+    }
     // generation method: it reads one slice of the experts per (slot, token), so up to n_expert pairs it reads no more weights than the prompt method
     const bool gen = c->mid_max_tokens >= 0 ? ids.d.ne[1] <= c->mid_max_tokens : ids.d.ne[0] * ids.d.ne[1] <= s0.d.ne[2];
     if (gen) {

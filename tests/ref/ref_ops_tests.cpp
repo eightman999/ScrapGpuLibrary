@@ -508,6 +508,36 @@ void test_rows_ops() {
         CHECK(y[4] == 0x3C00 && y[5] == 0x3C00); // row 2 untouched
         CHECK(y[6] == e3[0] && y[7] == e3[1]);    // row 3 = first source row
     }
+    // audit H-4: SET_ROWS must reject the indices it cannot address before touching the images
+    {
+        const scrapgpu_tensor_desc s = tdesc(SCRAPGPU_DTYPE_F32, 2, 2);
+        const scrapgpu_tensor_desc ids = tdesc(SCRAPGPU_DTYPE_I64, 2);
+        const scrapgpu_tensor_desc d = tdesc(SCRAPGPU_DTYPE_F32, 2, 4);
+        const std::vector<float> a = {1.0f, 2.0f, 3.0f, 4.0f};
+        std::vector<float> y(8, 1.0f);
+        scrapgpu_set_rows_params p{sizeof(p), 1};
+
+        // an out-of-range index value would write past the image (ASan: heap-buffer-overflow)
+        const std::vector<int64_t> too_far = {3, 4};
+        const scrapgpu_tensor_desc in[2] = {s, ids};
+        CHECK(execute(SCRAPGPU_OP_SET_ROWS, in, {const_cast<float *>(a.data()), const_cast<int64_t *>(too_far.data())},
+                      const_cast<scrapgpu_tensor_desc *>(&d), {y.data()}, &p, sizeof(p)) == SCRAPGPU_STATUS_INVALID_ARGUMENT);
+
+        // a negative index would write before the image
+        const std::vector<int64_t> neg = {3, -1};
+        CHECK(execute(SCRAPGPU_OP_SET_ROWS, in, {const_cast<float *>(a.data()), const_cast<int64_t *>(neg.data())},
+                      const_cast<scrapgpu_tensor_desc *>(&d), {y.data()}, &p, sizeof(p)) == SCRAPGPU_STATUS_INVALID_ARGUMENT);
+
+        // an index tensor shorter than the source row count would be read past its declared
+        // extent: the descriptor covers 2 indices but 3 source rows are scattered (with a
+        // shorter host image ASan reports a heap-buffer-overflow on the read)
+        const scrapgpu_tensor_desc s3 = tdesc(SCRAPGPU_DTYPE_F32, 2, 3);
+        const std::vector<float> a3(6, 1.0f);
+        const std::vector<int64_t> idx3 = {3, 0, 1};
+        const scrapgpu_tensor_desc in3[2] = {s3, ids};
+        CHECK(execute(SCRAPGPU_OP_SET_ROWS, in3, {const_cast<float *>(a3.data()), const_cast<int64_t *>(idx3.data())},
+                      const_cast<scrapgpu_tensor_desc *>(&d), {y.data()}, &p, sizeof(p)) == SCRAPGPU_STATUS_INVALID_ARGUMENT);
+    }
 }
 
 void test_cpy() {

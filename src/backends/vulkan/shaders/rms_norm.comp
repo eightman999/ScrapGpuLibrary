@@ -19,12 +19,21 @@ layout(push_constant) uniform Params {
     float eps;
     uint a_off, a_nb0, a_nb1, a_nb2, a_nb3;
     uint d_off, d_nb0, d_nb1, d_nb2, d_nb3;
+    uint nrows;          // ne01*ne02*ne03: bounds the flat row index (must stay in sync with
+                         // pc_rms in api.cpp)
 } p;
 
 shared float sumsh[BLOCK];
 
 void main() {
     const uint row = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
+    // the dispatch is padded (gx is capped at 65535 and gy covers the rest): workgroups past the
+    // last row must not touch the tensor. The guard is uniform per workgroup — row depends on the
+    // workgroup ids only — so a whole workgroup returns together and no partial workgroup skips
+    // the barrier() below.
+    if (row >= p.nrows) {
+        return;
+    }
     const uint tid = gl_LocalInvocationID.x;
     uint r = row;
     const uint i1 = r % p.ne01; r /= p.ne01;

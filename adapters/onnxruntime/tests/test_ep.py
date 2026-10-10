@@ -82,6 +82,43 @@ nmse = float(np.sum(diff * diff) / max(float(np.sum(y_ref * y_ref)), 1e-30))
 print(f"OK:claimed={claimed}:nmse={nmse}:maxabs={float(np.max(np.abs(diff)))}")
 """
 
+# audit M-1: a claimed op must validate the runtime shapes of its inputs. Two symbolic dims
+# (reported as -1) look identical at claim time, so a claimed Add can still see mismatched shapes
+# at run time; the EP must fail the node, not read the shorter operand out of bounds.
+_RUNNER_DYN = r"""
+import sys
+import numpy as np
+import onnx
+from onnx import TensorProto, helper
+import onnxruntime as ort
+
+lib = sys.argv[1]
+ort.register_execution_provider_library("ScrapGpuExecutionProvider", lib)
+devices = [d for d in ort.get_ep_devices() if d.ep_name == "ScrapGpuExecutionProvider"]
+if not devices:
+    print("SKIP:no_devices")
+    sys.exit(0)
+
+x_info = helper.make_tensor_value_info("X", TensorProto.FLOAT, ["d1"])
+y_info = helper.make_tensor_value_info("Y", TensorProto.FLOAT, ["d2"])
+z_info = helper.make_tensor_value_info("Z", TensorProto.FLOAT, ["d3"])
+graph = helper.make_graph([helper.make_node("Add", ["X", "Y"], ["Z"])], "dyn", [x_info, y_info], [z_info])
+model = helper.make_model(graph)
+model.opset_import[0].version = 17
+model.ir_version = 10  # onnx 1.23 writes IR 14 by default; ONNX Runtime 1.31 reads up to 13
+onnx.checker.check_model(model)
+
+so = ort.SessionOptions()
+sess = ort.InferenceSession(model.SerializeToString(), sess_options=so, providers=["ScrapGpuExecutionProvider"])
+try:
+    sess.run(None, {"X": np.ones(8, dtype=np.float32), "Y": np.ones(4, dtype=np.float32)})
+except Exception as e:
+    print("OK:node failed cleanly:", e)
+    sys.exit(0)
+print("FAIL:the mismatched Add ran without an error")
+sys.exit(1)
+"""
+
 
 class TestScrapGpuEp(unittest.TestCase):
     def _run_child(self, weight_type: str) -> subprocess.CompletedProcess[str]:
@@ -126,6 +163,20 @@ class TestScrapGpuEp(unittest.TestCase):
                 self.assertLess(nmse, 1e-3)
             else:
                 self.assertLess(nmse, 1e-2)
+
+    def test_dynamic_shape_mismatch_refused(self) -> None:
+        proc = subprocess.run(
+            [sys.executable, "-c", _RUNNER_DYN, str(_ep_lib())],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if proc.returncode != 0:
+            self.fail(f"EP subprocess failed ({proc.returncode}):\n{proc.stdout}\n{proc.stderr}")
+        line = (proc.stdout or "").strip().splitlines()[-1] if proc.stdout else ""
+        if line.startswith("SKIP:"):
+            self.skipTest(line[5:])
+        self.assertTrue(line.startswith("OK:"), line)
 
 
 if __name__ == "__main__":

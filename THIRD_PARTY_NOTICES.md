@@ -12,7 +12,9 @@ It contains or is derived from the following third-party work, which keeps its o
   - `adapters/ggml/llama.cpp/in-tree-registration.patch`: a patch to llama.cpp source files (the context lines are llama.cpp code).
   - `src/backends/opencl11/kernels/*.cl`: the quantized block formats (Q4_0, Q8_0, Q4_K, Q6_K) and their dequantization follow `ggml-common.h` / `ggml-quants.c`, so the weights are bit-compatible with GGUF.
   - `src/backends/vulkan/shaders/*.comp`: the elementwise-binary, RMS-norm and mat-vec/mat-mat shader logic (stride/index handling, the Q4_0/Q8_0 block layouts and their dequantization) is ported from the ggml-vulkan backend's `vulkan-shaders` (`generic_binary_head.glsl`, `rms_norm.comp`, `mul_mat_vec_base.glsl`, `dequant_funcs.glsl`, `types.glsl`). The Vulkan host code of `src/backends/vulkan/` is new; only the shader logic is ported.
-  - CPU reference implementations of the quantized formats, where they are ported from `ggml-quants.c`.
+  - `src/backends/opencl11/api.cpp`: the rope yarn corr-dims helper (`api_rope_yarn_corr_dims`) follows `ggml.c`.
+  - `src/tensor/`: the descriptor conventions (ne/nb order, block-quantized dtypes, the definition of contiguity) follow the ggml tensor layout, so the ggml adapter converts without reshaping.
+  - CPU reference implementations of the quantized formats, where they are ported from `ggml-quants.c` (`src/core/ref/quant.cpp`).
 
 ```
 MIT License
@@ -44,12 +46,12 @@ Follow [docs/REUSE.md](docs/REUSE.md): MIT / BSD / BSL-1.0 / CC0 and Apache-2.0 
 
 ## Vulkan-Headers
 
-- Source: https://github.com/KhronosGroup/Vulkan-Headers, tag `v1.4.365` (only `include/` and the license files are kept, in `third_party/Vulkan-Headers/`)
+- Source: https://github.com/KhronosGroup/Vulkan-Headers, tag `v1.4.365` (only `include/`, `README.md` and the license files are kept, in `third_party/Vulkan-Headers/`)
 - License: Apache-2.0 or MIT (per file, see `third_party/Vulkan-Headers/LICENSE.md` and `LICENSES/`)
 - Used by the Vulkan backend (`src/backends/vulkan/`) to build without the system Vulkan SDK.
 
 ## volk
 
-- Source: https://github.com/zeux/volk, tag `vulkan-sdk-1.4.363.0` (`volk.c`, `volk.h`, in `third_party/volk/`)
+- Source: https://github.com/zeux/volk, tag `vulkan-sdk-1.4.363.0` (`volk.c`, `volk.h`, `LICENSE.md`, `README.md`, in `third_party/volk/`; the upstream CI files were dropped)
 - License: MIT (`third_party/volk/LICENSE.md`)
 - The Vulkan meta-loader of the Vulkan backend: loads `libvulkan` at run time.

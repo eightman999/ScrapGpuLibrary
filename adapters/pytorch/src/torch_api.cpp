@@ -32,6 +32,21 @@ void check_status(scrapgpu_status st, const char * what) {
     }
 }
 
+// an allocated ScrapGpu buffer freed on scope exit: check_status throws, so bare buffer pointers
+// would leak on every error path (audit M-3)
+struct GpuBuf {
+    scrapgpu_buffer_t * b = nullptr;
+    GpuBuf() = default;
+    GpuBuf(const GpuBuf &) = delete;
+    GpuBuf & operator=(const GpuBuf &) = delete;
+    ~GpuBuf() {
+        if (b != nullptr) {
+            scrapgpu_buffer_free(b);
+        }
+    }
+    scrapgpu_buffer_t ** put() { return &b; }
+};
+
 void ensure_gpu() {
     std::lock_guard<std::mutex> lock(g_mu);
     if (g_ready) {
@@ -153,6 +168,7 @@ public:
         TORCH_CHECK(w.dim() == 2, "weight must be 2-D [out_features, in_features]");
         const int64_t m = w.size(0);
         const int64_t k = w.size(1);
+        TORCH_CHECK(m > 0 && k > 0, "weight must be non-empty");
         out_features_ = m;
         in_features_ = k;
         dtype_ = parse_quant(quant_type_);
@@ -233,14 +249,17 @@ at::Tensor linear_cpu(const at::Tensor & x, const c10::intrusive_ptr<WeightImpl>
         TORCH_CHECK(false, "x must be [N,K] or [K]");
     }
     const int64_t n = xt.size(0);
+    if (n == 0) {
+        at::Tensor y = at::empty({0, m}, xt.options());
+        return vec ? y.squeeze(0) : y;
+    }
 
-    scrapgpu_buffer_t * bx = nullptr;
-    scrapgpu_buffer_t * by = nullptr;
-    check_status(scrapgpu_buffer_alloc(g_dev, static_cast<size_t>(k * n) * sizeof(float), &bx), "buffer_alloc x");
-    check_status(scrapgpu_buffer_alloc(g_dev, static_cast<size_t>(m * n) * sizeof(float), &by), "buffer_alloc y");
+    GpuBuf bx, by;
+    check_status(scrapgpu_buffer_alloc(g_dev, static_cast<size_t>(k * n) * sizeof(float), bx.put()), "buffer_alloc x");
+    check_status(scrapgpu_buffer_alloc(g_dev, static_cast<size_t>(m * n) * sizeof(float), by.put()), "buffer_alloc y");
 
-    scrapgpu_tensor_desc xdesc = make_desc(SCRAPGPU_DTYPE_F32, SCRAPGPU_LAYOUT_NATURAL, k, n, 1, 1, bx);
-    scrapgpu_tensor_desc ydesc = make_desc(SCRAPGPU_DTYPE_F32, SCRAPGPU_LAYOUT_NATURAL, m, n, 1, 1, by);
+    scrapgpu_tensor_desc xdesc = make_desc(SCRAPGPU_DTYPE_F32, SCRAPGPU_LAYOUT_NATURAL, k, n, 1, 1, bx.b);
+    scrapgpu_tensor_desc ydesc = make_desc(SCRAPGPU_DTYPE_F32, SCRAPGPU_LAYOUT_NATURAL, m, n, 1, 1, by.b);
 
     check_status(scrapgpu_tensor_upload(g_stream, &xdesc, xt.data_ptr<float>(), static_cast<size_t>(k * n) * sizeof(float)), "upload x");
 
@@ -254,9 +273,6 @@ at::Tensor linear_cpu(const at::Tensor & x, const c10::intrusive_ptr<WeightImpl>
     at::Tensor y = at::empty({n, m}, xt.options());
     check_status(scrapgpu_tensor_download(g_stream, &ydesc, y.data_ptr<float>(), static_cast<size_t>(m * n) * sizeof(float)), "download y");
 
-    scrapgpu_buffer_free(bx);
-    scrapgpu_buffer_free(by);
-
     if (vec) {
         return y.squeeze(0);
     }
@@ -265,15 +281,19 @@ at::Tensor linear_cpu(const at::Tensor & x, const c10::intrusive_ptr<WeightImpl>
 
 at::Tensor unary_f32(scrapgpu_unary_kind kind, const at::Tensor & x) {
     at::Tensor xt = require_cpu_f32(x, "x");
-    scrapgpu_buffer_t * bx = nullptr;
-    scrapgpu_buffer_t * by = nullptr;
+    TORCH_CHECK(xt.dim() >= 1, "x must have at least 1 dimension");
+    // an empty tensor needs no GPU work — and numel()/size(-1) would divide by zero (audit M-3)
+    if (xt.numel() == 0) {
+        return at::empty_like(xt);
+    }
     const int64_t n0 = xt.size(-1);
     const int64_t n1 = xt.numel() / n0;
-    check_status(scrapgpu_buffer_alloc(g_dev, static_cast<size_t>(xt.numel()) * sizeof(float), &bx), "buffer_alloc");
-    check_status(scrapgpu_buffer_alloc(g_dev, static_cast<size_t>(xt.numel()) * sizeof(float), &by), "buffer_alloc");
+    GpuBuf bx, by;
+    check_status(scrapgpu_buffer_alloc(g_dev, static_cast<size_t>(xt.numel()) * sizeof(float), bx.put()), "buffer_alloc");
+    check_status(scrapgpu_buffer_alloc(g_dev, static_cast<size_t>(xt.numel()) * sizeof(float), by.put()), "buffer_alloc");
 
-    scrapgpu_tensor_desc in = make_desc(SCRAPGPU_DTYPE_F32, SCRAPGPU_LAYOUT_NATURAL, n0, n1, 1, 1, bx);
-    scrapgpu_tensor_desc out = make_desc(SCRAPGPU_DTYPE_F32, SCRAPGPU_LAYOUT_NATURAL, n0, n1, 1, 1, by);
+    scrapgpu_tensor_desc in = make_desc(SCRAPGPU_DTYPE_F32, SCRAPGPU_LAYOUT_NATURAL, n0, n1, 1, 1, bx.b);
+    scrapgpu_tensor_desc out = make_desc(SCRAPGPU_DTYPE_F32, SCRAPGPU_LAYOUT_NATURAL, n0, n1, 1, 1, by.b);
     check_status(scrapgpu_tensor_upload(g_stream, &in, xt.data_ptr<float>(), static_cast<size_t>(xt.numel()) * sizeof(float)), "upload");
 
     scrapgpu_unary_params p{};
@@ -284,8 +304,6 @@ at::Tensor unary_f32(scrapgpu_unary_kind kind, const at::Tensor & x) {
 
     at::Tensor y = at::empty_like(xt);
     check_status(scrapgpu_tensor_download(g_stream, &out, y.data_ptr<float>(), static_cast<size_t>(xt.numel()) * sizeof(float)), "download");
-    scrapgpu_buffer_free(bx);
-    scrapgpu_buffer_free(by);
     return y;
 }
 
@@ -293,28 +311,28 @@ at::Tensor add_cpu(const at::Tensor & a, const at::Tensor & b) {
     at::Tensor ta = require_cpu_f32(a, "a");
     at::Tensor tb = require_cpu_f32(b, "b");
     TORCH_CHECK(ta.sizes() == tb.sizes(), "add: shape mismatch");
-    scrapgpu_buffer_t * ba = nullptr;
-    scrapgpu_buffer_t * bb = nullptr;
-    scrapgpu_buffer_t * bd = nullptr;
+    TORCH_CHECK(ta.dim() >= 1, "a must have at least 1 dimension");
+    // an empty tensor needs no GPU work — and numel()/size(-1) would divide by zero (audit M-3)
+    if (ta.numel() == 0) {
+        return at::empty_like(ta);
+    }
     const size_t bytes = static_cast<size_t>(ta.numel()) * sizeof(float);
-    check_status(scrapgpu_buffer_alloc(g_dev, bytes, &ba), "buffer_alloc");
-    check_status(scrapgpu_buffer_alloc(g_dev, bytes, &bb), "buffer_alloc");
-    check_status(scrapgpu_buffer_alloc(g_dev, bytes, &bd), "buffer_alloc");
+    GpuBuf ba, bb, bd;
+    check_status(scrapgpu_buffer_alloc(g_dev, bytes, ba.put()), "buffer_alloc");
+    check_status(scrapgpu_buffer_alloc(g_dev, bytes, bb.put()), "buffer_alloc");
+    check_status(scrapgpu_buffer_alloc(g_dev, bytes, bd.put()), "buffer_alloc");
 
     const int64_t n0 = ta.size(-1);
     const int64_t n1 = ta.numel() / n0;
-    scrapgpu_tensor_desc da = make_desc(SCRAPGPU_DTYPE_F32, SCRAPGPU_LAYOUT_NATURAL, n0, n1, 1, 1, ba);
-    scrapgpu_tensor_desc db = make_desc(SCRAPGPU_DTYPE_F32, SCRAPGPU_LAYOUT_NATURAL, n0, n1, 1, 1, bb);
-    scrapgpu_tensor_desc dd = make_desc(SCRAPGPU_DTYPE_F32, SCRAPGPU_LAYOUT_NATURAL, n0, n1, 1, 1, bd);
+    scrapgpu_tensor_desc da = make_desc(SCRAPGPU_DTYPE_F32, SCRAPGPU_LAYOUT_NATURAL, n0, n1, 1, 1, ba.b);
+    scrapgpu_tensor_desc db = make_desc(SCRAPGPU_DTYPE_F32, SCRAPGPU_LAYOUT_NATURAL, n0, n1, 1, 1, bb.b);
+    scrapgpu_tensor_desc dd = make_desc(SCRAPGPU_DTYPE_F32, SCRAPGPU_LAYOUT_NATURAL, n0, n1, 1, 1, bd.b);
     check_status(scrapgpu_tensor_upload(g_stream, &da, ta.data_ptr<float>(), bytes), "upload a");
     check_status(scrapgpu_tensor_upload(g_stream, &db, tb.data_ptr<float>(), bytes), "upload b");
     std::vector<scrapgpu_tensor_desc> outs = {dd};
     run_op(SCRAPGPU_OP_ADD, {da, db}, outs, nullptr, 0);
     at::Tensor out = at::empty_like(ta);
     check_status(scrapgpu_tensor_download(g_stream, &dd, out.data_ptr<float>(), bytes), "download");
-    scrapgpu_buffer_free(ba);
-    scrapgpu_buffer_free(bb);
-    scrapgpu_buffer_free(bd);
     return out;
 }
 
@@ -324,21 +342,23 @@ at::Tensor rms_norm_cpu(const at::Tensor & x, const at::Tensor & w, double eps) 
     TORCH_CHECK(xt.dim() >= 1, "x must have at least 1 dimension");
     TORCH_CHECK(wt.dim() == 1, "w must be 1-D");
     TORCH_CHECK(wt.size(0) == xt.size(-1), "w length must match x last dim");
+    // an empty tensor needs no GPU work — and numel()/size(-1) would divide by zero (audit M-3)
+    if (xt.numel() == 0) {
+        return at::empty_like(xt);
+    }
     const int64_t n0 = xt.size(-1);
     const int64_t n1 = xt.numel() / n0;
 
-    scrapgpu_buffer_t * bx = nullptr;
-    scrapgpu_buffer_t * bw = nullptr;
-    scrapgpu_buffer_t * by = nullptr;
+    GpuBuf bx, bw, by;
     const size_t xbytes = static_cast<size_t>(xt.numel()) * sizeof(float);
     const size_t wbytes = static_cast<size_t>(wt.numel()) * sizeof(float);
-    check_status(scrapgpu_buffer_alloc(g_dev, xbytes, &bx), "buffer_alloc x");
-    check_status(scrapgpu_buffer_alloc(g_dev, wbytes, &bw), "buffer_alloc w");
-    check_status(scrapgpu_buffer_alloc(g_dev, xbytes, &by), "buffer_alloc y");
+    check_status(scrapgpu_buffer_alloc(g_dev, xbytes, bx.put()), "buffer_alloc x");
+    check_status(scrapgpu_buffer_alloc(g_dev, wbytes, bw.put()), "buffer_alloc w");
+    check_status(scrapgpu_buffer_alloc(g_dev, xbytes, by.put()), "buffer_alloc y");
 
-    scrapgpu_tensor_desc tx = make_desc(SCRAPGPU_DTYPE_F32, SCRAPGPU_LAYOUT_NATURAL, n0, n1, 1, 1, bx);
-    scrapgpu_tensor_desc tw = make_desc(SCRAPGPU_DTYPE_F32, SCRAPGPU_LAYOUT_NATURAL, n0, 1, 1, 1, bw);
-    scrapgpu_tensor_desc ty = make_desc(SCRAPGPU_DTYPE_F32, SCRAPGPU_LAYOUT_NATURAL, n0, n1, 1, 1, by);
+    scrapgpu_tensor_desc tx = make_desc(SCRAPGPU_DTYPE_F32, SCRAPGPU_LAYOUT_NATURAL, n0, n1, 1, 1, bx.b);
+    scrapgpu_tensor_desc tw = make_desc(SCRAPGPU_DTYPE_F32, SCRAPGPU_LAYOUT_NATURAL, n0, 1, 1, 1, bw.b);
+    scrapgpu_tensor_desc ty = make_desc(SCRAPGPU_DTYPE_F32, SCRAPGPU_LAYOUT_NATURAL, n0, n1, 1, 1, by.b);
     check_status(scrapgpu_tensor_upload(g_stream, &tx, xt.data_ptr<float>(), xbytes), "upload x");
     check_status(scrapgpu_tensor_upload(g_stream, &tw, wt.data_ptr<float>(), wbytes), "upload w");
 
@@ -350,9 +370,6 @@ at::Tensor rms_norm_cpu(const at::Tensor & x, const at::Tensor & w, double eps) 
 
     at::Tensor y = at::empty_like(xt);
     check_status(scrapgpu_tensor_download(g_stream, &ty, y.data_ptr<float>(), xbytes), "download");
-    scrapgpu_buffer_free(bx);
-    scrapgpu_buffer_free(bw);
-    scrapgpu_buffer_free(by);
     return y;
 }
 
@@ -376,19 +393,21 @@ at::Tensor rope_cpu(
     const int64_t nh = xt.size(1);
     const int64_t nt = xt.size(2);
     TORCH_CHECK(pos.size(0) >= nt, "pos must have at least n_tokens entries");
+    // an empty tensor needs no GPU work (audit M-3)
+    if (xt.numel() == 0) {
+        return at::empty_like(xt);
+    }
 
-    scrapgpu_buffer_t * bx = nullptr;
-    scrapgpu_buffer_t * bp = nullptr;
-    scrapgpu_buffer_t * by = nullptr;
+    GpuBuf bx, bp, by;
     const size_t xbytes = static_cast<size_t>(xt.numel()) * sizeof(float);
     const size_t pbytes = static_cast<size_t>(pos.numel()) * sizeof(int32_t);
-    check_status(scrapgpu_buffer_alloc(g_dev, xbytes, &bx), "buffer_alloc x");
-    check_status(scrapgpu_buffer_alloc(g_dev, pbytes, &bp), "buffer_alloc pos");
-    check_status(scrapgpu_buffer_alloc(g_dev, xbytes, &by), "buffer_alloc y");
+    check_status(scrapgpu_buffer_alloc(g_dev, xbytes, bx.put()), "buffer_alloc x");
+    check_status(scrapgpu_buffer_alloc(g_dev, pbytes, bp.put()), "buffer_alloc pos");
+    check_status(scrapgpu_buffer_alloc(g_dev, xbytes, by.put()), "buffer_alloc y");
 
-    scrapgpu_tensor_desc tx = make_desc(SCRAPGPU_DTYPE_F32, SCRAPGPU_LAYOUT_NATURAL, hd, nh, nt, 1, bx);
-    scrapgpu_tensor_desc tp = make_desc(SCRAPGPU_DTYPE_I32, SCRAPGPU_LAYOUT_NATURAL, pos.size(0), 1, 1, 1, bp);
-    scrapgpu_tensor_desc ty = make_desc(SCRAPGPU_DTYPE_F32, SCRAPGPU_LAYOUT_NATURAL, hd, nh, nt, 1, by);
+    scrapgpu_tensor_desc tx = make_desc(SCRAPGPU_DTYPE_F32, SCRAPGPU_LAYOUT_NATURAL, hd, nh, nt, 1, bx.b);
+    scrapgpu_tensor_desc tp = make_desc(SCRAPGPU_DTYPE_I32, SCRAPGPU_LAYOUT_NATURAL, pos.size(0), 1, 1, 1, bp.b);
+    scrapgpu_tensor_desc ty = make_desc(SCRAPGPU_DTYPE_F32, SCRAPGPU_LAYOUT_NATURAL, hd, nh, nt, 1, by.b);
     check_status(scrapgpu_tensor_upload(g_stream, &tx, xt.data_ptr<float>(), xbytes), "upload x");
     check_status(scrapgpu_tensor_upload(g_stream, &tp, pos.data_ptr<int32_t>(), pbytes), "upload pos");
 
@@ -408,9 +427,6 @@ at::Tensor rope_cpu(
 
     at::Tensor y = at::empty_like(xt);
     check_status(scrapgpu_tensor_download(g_stream, &ty, y.data_ptr<float>(), xbytes), "download");
-    scrapgpu_buffer_free(bx);
-    scrapgpu_buffer_free(bp);
-    scrapgpu_buffer_free(by);
     return y;
 }
 

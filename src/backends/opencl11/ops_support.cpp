@@ -90,7 +90,11 @@ bool cl11_supports_set_rows(const sgt::TensorDesc & s0, const sgt::TensorDesc & 
     return cl11_is_float(s0.dtype) && cl11_is_float(d.dtype) &&
            (ids.dtype == SCRAPGPU_DTYPE_I64 || ids.dtype == SCRAPGPU_DTYPE_I32) &&
            s0.nb[0] == sgt::dtype_type_size(s0.dtype) && d.nb[0] == sgt::dtype_type_size(d.dtype) &&
-           s0.ne[0] == d.ne[0] && s0.ne[2] % ids.ne[1] == 0 && s0.ne[3] % ids.ne[2] == 0;
+           s0.ne[0] == d.ne[0] &&
+           // the kernel reads ids[i01, i02 % ne11, i03 % ne12]: the index tensor must cover the
+           // rows of src0 and the broadcast dims must divide evenly (and be nonzero)
+           ids.ne[0] >= s0.ne[1] && ids.ne[1] > 0 && ids.ne[2] > 0 &&
+           s0.ne[2] % ids.ne[1] == 0 && s0.ne[3] % ids.ne[2] == 0;
 }
 
 // CPY / DUP / CONT
@@ -104,6 +108,7 @@ bool cl11_supports_mul_mat(const sgt::TensorDesc & s0, bool s0_repacked, const s
            s0.nb[0] == sgt::dtype_type_size(s0.dtype) &&
            s1.nb[0] == sizeof(float) && d.nb[0] == sizeof(float) &&
            s0.ne[0] == s1.ne[0] &&
+           s0.ne[2] > 0 && s0.ne[3] > 0 &&
            s1.ne[2] % s0.ne[2] == 0 && s1.ne[3] % s0.ne[3] == 0;
 }
 
@@ -156,7 +161,9 @@ bool cl11_supports_mul_mat_id(const cl11_device * c, const sgt::TensorDesc & s0,
         d.ne[0] != s0.ne[1] || d.ne[1] != ids->ne[0] || d.ne[2] != ids->ne[1]) {
         return false;
     }
-    // the scratch buffers of the prompt processing path
-    const size_t pairs = (size_t) (ids->ne[0] * ids->ne[1]);
-    return pairs * (size_t) std::max(s0.ne[0], s0.ne[1]) * sizeof(float) <= cl11_max_buffer_size(c->info);
+    // the scratch buffers of the prompt processing path — saturated products: the int64 product
+    // of two valid dims can wrap the size_t scratch estimate below the limit (audit M-4)
+    const uint64_t scratch = sgt::mul_sat_u64(sgt::mul_sat_u64((uint64_t) ids->ne[0], (uint64_t) ids->ne[1]),
+                                              sgt::mul_sat_u64((uint64_t) std::max(s0.ne[0], s0.ne[1]), (uint64_t) sizeof(float)));
+    return scratch <= cl11_max_buffer_size(c->info);
 }

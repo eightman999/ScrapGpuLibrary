@@ -23,6 +23,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -68,11 +69,36 @@ struct vk_api_plan {
     scrapgpu_object_header           hdr;
     vk_api_device *                  dev = nullptr;
     std::vector<vk_api_plan_node>    nodes;
+    // every backend buffer the node descriptors reference: a plan keeps no ownership, but
+    // buffer_free refuses while a plan points at the buffer (audit M-2)
+    std::vector<vk_api_buffer *>     bufs;
 };
 
 extern const scrapgpu_backend_vtable g_vk_vtable; // defined under "registration" below
 
 std::vector<std::unique_ptr<vk_api_device>> g_devices;
+
+// how many live plans reference each buffer (the pointers of the descriptor copies in the plans)
+std::mutex                                    g_plan_bufs_mutex;
+std::unordered_map<vk_api_buffer *, size_t>   g_plan_bufs;
+
+void plan_ref_buffer(vk_api_buffer * b) {
+    std::lock_guard<std::mutex> lock(g_plan_bufs_mutex);
+    ++g_plan_bufs[b];
+}
+
+void plan_unref_buffer(vk_api_buffer * b) {
+    std::lock_guard<std::mutex> lock(g_plan_bufs_mutex);
+    const auto it = g_plan_bufs.find(b);
+    if (it != g_plan_bufs.end() && --it->second == 0) {
+        g_plan_bufs.erase(it);
+    }
+}
+
+bool plan_refs_buffer(vk_api_buffer * b) {
+    std::lock_guard<std::mutex> lock(g_plan_bufs_mutex);
+    return g_plan_bufs.find(b) != g_plan_bufs.end();
+}
 
 // ---------------------------------------------------------------------------------------------
 // helpers
@@ -179,6 +205,7 @@ struct pc_rms { // rms_norm.comp
     float eps;
     uint32_t a_off, a_nb[4];
     uint32_t d_off, d_nb[4];
+    uint32_t nrows;
 };
 
 struct pc_mv { // mul_mat_vec.comp
@@ -186,7 +213,7 @@ struct pc_mv { // mul_mat_vec.comp
     uint32_t a_off, a_nb1, a_nb2, a_nb3;
     uint32_t b_off, b_nb2, b_nb3;
     uint32_t d_off, d_nb2, d_nb3;
-    uint32_t r2, r3, ne12;
+    uint32_t r2, r3, ne12, nrows;
 };
 
 struct pc_mm { // mul_mat.comp
@@ -465,6 +492,7 @@ scrapgpu_status api_dispatch_rms(vk_api_stream * s, const scrapgpu_op_desc * des
     if (rows == 0) {
         return SCRAPGPU_STATUS_OK;
     }
+    pc.nrows = (uint32_t) rows; // the padded dispatch can reach rows <= row < gx*gy (audit H-1)
     const uint32_t gx = (uint32_t) std::min<uint64_t>(rows, 65535);
     const uint32_t gy = (uint32_t) ((rows + gx - 1) / gx);
     return api_record_dispatch(s, sgv::VK_S_RMS_NORM, &pc, sizeof(pc), in[0], in[0], out[0], gx, gy, 1);
@@ -514,6 +542,7 @@ scrapgpu_status api_dispatch_mul_mat(vk_api_stream * s, const vk_tref * in, cons
         pc.r3 = (uint32_t) r3;
         pc.ne12 = (uint32_t) s1.ne[2];
         const uint64_t rows = (uint64_t) s0.ne[1];
+        pc.nrows = (uint32_t) rows; // the padded dispatch can reach rows <= row < gx*gy (audit H-1)
         const uint32_t gx = (uint32_t) std::min<uint64_t>(rows, 65535);
         const uint32_t gy = (uint32_t) ((rows + gx - 1) / gx);
         return api_record_dispatch(s, api_mv_shader(s0.dtype), &pc, sizeof(pc), in[0], in[1], out[0], gx, gy, (uint32_t) batch);
@@ -779,6 +808,9 @@ scrapgpu_status api_buffer_free(scrapgpu_buffer_t * buffer) {
     vk_api_buffer * b = api_buffer(buffer);
     if (b == nullptr) {
         return api_invalid("not a Vulkan buffer");
+    }
+    if (plan_refs_buffer(b)) {
+        return api_invalid("buffer is still referenced by a live plan");
     }
     vk_api_device * d = b->dev;
     std::lock_guard<std::mutex> lock(d->dev.mutex);
@@ -1147,7 +1179,7 @@ scrapgpu_status api_plan_build(scrapgpu_device_t * device, const scrapgpu_plan_d
     vk_api_device * d = api_device(device);
     if (d == nullptr || desc == nullptr || out_plan == nullptr ||
         desc->struct_size < offsetof(scrapgpu_plan_desc, node_count) + sizeof(desc->node_count) ||
-        (desc->node_count > 0 && desc->nodes == nullptr)) {
+        desc->node_count > 4096 || (desc->node_count > 0 && desc->nodes == nullptr)) {
         return api_invalid("device, plan desc or node list is invalid");
     }
     *out_plan = nullptr;
@@ -1183,7 +1215,21 @@ scrapgpu_status api_plan_build(scrapgpu_device_t * device, const scrapgpu_plan_d
         n.desc.inputs  = n.inputs.data();
         n.desc.outputs = n.outputs.data();
         n.desc.params  = n.params.empty() ? nullptr : n.params.data();
+        // the buffers the node references: buffer_free must refuse while this plan is alive
+        for (const scrapgpu_tensor_desc & t : n.inputs) {
+            if (vk_api_buffer * rb = api_buffer(t.buffer)) {
+                plan->bufs.push_back(rb);
+            }
+        }
+        for (const scrapgpu_tensor_desc & t : n.outputs) {
+            if (vk_api_buffer * rb = api_buffer(t.buffer)) {
+                plan->bufs.push_back(rb);
+            }
+        }
         plan->nodes.push_back(std::move(n));
+    }
+    for (vk_api_buffer * rb : plan->bufs) {
+        plan_ref_buffer(rb);
     }
     *out_plan = reinterpret_cast<scrapgpu_plan_t *>(plan.release());
     return SCRAPGPU_STATUS_OK;
@@ -1218,6 +1264,9 @@ scrapgpu_status api_plan_free(scrapgpu_plan_t * plan_) {
     auto * plan = reinterpret_cast<vk_api_plan *>(plan_);
     if (plan == nullptr || plan->hdr.backend != &g_vk_vtable) {
         return api_invalid("not a Vulkan plan");
+    }
+    for (vk_api_buffer * rb : plan->bufs) {
+        plan_unref_buffer(rb);
     }
     delete plan;
     return SCRAPGPU_STATUS_OK;

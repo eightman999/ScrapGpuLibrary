@@ -135,7 +135,7 @@ static scrapgpu_dtype cl11_dtype_of(ggml_type type) {
         case GGML_TYPE_Q8_0: return SCRAPGPU_DTYPE_Q8_0;
         case GGML_TYPE_Q4_K: return SCRAPGPU_DTYPE_Q4_K;
         case GGML_TYPE_Q6_K: return SCRAPGPU_DTYPE_Q6_K;
-        default:             return (scrapgpu_dtype) -1;
+        default:             return SCRAPGPU_DTYPE_UNKNOWN;
     }
 }
 
@@ -396,7 +396,7 @@ static bool cl11_fits_int(const ggml_tensor * t) {
     if (t == nullptr) {
         return true;
     }
-    if (cl11_dtype_of(t->type) == (scrapgpu_dtype) -1) {
+    if (cl11_dtype_of(t->type) == SCRAPGPU_DTYPE_UNKNOWN) {
         // a type the tensor module does not know (its nbytes would be 0): the same limits with the ggml sizes
         for (int i = 0; i < GGML_MAX_DIMS; ++i) {
             if (t->ne[i] > INT_MAX || t->nb[i] > INT_MAX) {

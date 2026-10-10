@@ -11,6 +11,13 @@ option(SCRAPGPU_BUILD_ORT_EP "Build the ONNX Runtime plugin execution provider" 
 option(SCRAPGPU_BUILD_TESTS "Build ScrapGpu contract tests" ON)
 option(SCRAPGPU_BUILD_BENCHMARKS "Build CPU reference benchmarks" OFF)
 option(SCRAPGPU_BUILD_EXAMPLES "Build the examples (needs SCRAPGPU_BUILD_OPENCL11)" ${SCRAPGPU_BUILD_OPENCL11})
+option(SCRAPGPU_SANITIZE "Compile and link with AddressSanitizer + UndefinedBehaviorSanitizer (CI)" OFF)
+
+if (SCRAPGPU_SANITIZE)
+    # stop at the first report: UBSan only prints by default and the tests would still pass
+    add_compile_options(-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address,undefined)
+endif()
 
 if (SCRAPGPU_BUILD_CORE OR SCRAPGPU_BUILD_OPENCL11)
     # the ggml-independent tensor descriptors and their math (no OpenCL, no ggml)
@@ -232,6 +239,18 @@ if (SCRAPGPU_BUILD_TESTS AND SCRAPGPU_BUILD_CORE)
             add_test(NAME scrapgpu_ops_tests_remote COMMAND scrapgpu_ops_tests)
             set_tests_properties(scrapgpu_ops_tests_remote PROPERTIES ENVIRONMENT "SCRAPGPU_TEST_BACKEND=remote" SKIP_RETURN_CODE 77)
         endif()
+    endif()
+
+    # the wire protocol against a spawned scrapgpu-device-server (no GPU needed, only a backend
+    # the server can register)
+    if (SCRAPGPU_BUILD_REMOTE AND (SCRAPGPU_BUILD_OPENCL11 OR SCRAPGPU_BUILD_VULKAN))
+        add_executable(scrapgpu_remote_protocol_tests tests/remote/remote_protocol_tests.cpp)
+        target_include_directories(scrapgpu_remote_protocol_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/backends/remote")
+        target_link_libraries(scrapgpu_remote_protocol_tests PRIVATE scrapgpu_core)
+        target_compile_definitions(scrapgpu_remote_protocol_tests PRIVATE
+            "SCRAPGPU_TEST_SERVER=\"$<TARGET_FILE:scrapgpu-device-server>\""
+            "SCRAPGPU_TEST_SERVER_BACKEND=\"$<IF:$<BOOL:${SCRAPGPU_BUILD_OPENCL11}>,opencl11,vulkan>\"")
+        add_test(NAME scrapgpu_remote_protocol_tests COMMAND scrapgpu_remote_protocol_tests)
     endif()
 
     add_test(NAME scrapgpu_dependency_check

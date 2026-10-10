@@ -28,7 +28,7 @@ bool reshape(const TensorDesc & d, const int64_t ne[4], TensorDesc & out) {
     }
     int64_t n = 1;
     for (int i = 0; i < kMaxDims; ++i) {
-        n *= ne[i];
+        n = mul_sat_i64(n, ne[i]);
     }
     if (n != nelements(d)) {
         return false;

@@ -8,6 +8,7 @@ extern "C" {
 #endif
 
 typedef enum scrapgpu_dtype {
+    SCRAPGPU_DTYPE_UNKNOWN = -1, /* not a storable type: the "no such type" result of a type mapping */
     SCRAPGPU_DTYPE_F32 = 0,
     SCRAPGPU_DTYPE_F16 = 1,
     SCRAPGPU_DTYPE_I32 = 2,
