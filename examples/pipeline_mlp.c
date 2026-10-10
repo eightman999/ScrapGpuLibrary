@@ -11,12 +11,19 @@
  * Runs unchanged with a single GPU.
  *
  *   usage: scrapgpu_pipeline_mlp [layers=8] [hidden=1024] [tokens=64]
+ *
+ * SCRAPGPU_PIPELINE_REMOTE="K=V;K=V" additionally spawns one scrapgpu-device-server with those
+ * environment overrides (e.g. "GGML_CL11_DEVICES=GT 430;GGML_CL11_PLATFORMS=NVIDIA") and its
+ * devices join the pipeline next to the local ones (the remote backend, docs/MULTI_GPU.md).
  */
 #include "scrapgpu/api.h"
 #include "scrapgpu/buffer.h"
 #include "scrapgpu/device.h"
 #include "scrapgpu/opencl11.h"
 #include "scrapgpu/op.h"
+#ifdef SCRAPGPU_EXAMPLE_WITH_REMOTE
+#include "scrapgpu/remote.h"
+#endif
 #include "scrapgpu/reference.h"
 #include "scrapgpu/status.h"
 #include "scrapgpu/stream.h"
@@ -359,6 +366,36 @@ int main(int argc, char ** argv) {
     }
 
     OK(scrapgpu_opencl11_register());
+#ifdef SCRAPGPU_EXAMPLE_WITH_REMOTE
+    scrapgpu_remote_t * remote = NULL;
+    {
+        const char * rspec = getenv("SCRAPGPU_PIPELINE_REMOTE");
+        if (rspec != NULL && rspec[0] != '\0') {
+            /* ';'-separated KEY=VALUE environment overrides for the server process */
+            char * spec = malloc(strlen(rspec) + 1);
+            const char * envv[64];
+            int ne = 0;
+            char * p;
+            if (spec == NULL) {
+                die("out of host memory");
+            }
+            memcpy(spec, rspec, strlen(rspec) + 1);
+            p = spec;
+            while (*p != '\0' && ne < 63) {
+                char * sep = strchr(p, ';');
+                envv[ne++] = p;
+                if (sep == NULL) {
+                    break;
+                }
+                *sep = '\0';
+                p = sep + 1;
+            }
+            envv[ne] = NULL;
+            OK(scrapgpu_remote_spawn(envv, &remote));
+            free(spec);
+        }
+    }
+#endif
     const int ndev = (int) scrapgpu_get_device_count();
     if (ndev == 0) {
         printf("no OpenCL device found, nothing to run\n");
@@ -468,6 +505,9 @@ int main(int argc, char ** argv) {
         OK(scrapgpu_stream_free(pds[d].stream));
     }
     free(pds);
+#ifdef SCRAPGPU_EXAMPLE_WITH_REMOTE
+    scrapgpu_remote_close(remote); /* NULL-safe */
+#endif
 
     if (nmse_one > 1e-2 || nmse_all > 1e-2) {
         fprintf(stderr, "NMSE is too large, the pipeline does not match the reference\n");

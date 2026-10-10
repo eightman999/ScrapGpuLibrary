@@ -18,6 +18,9 @@
 #if defined(SCRAPGPU_OPS_TEST_WITH_VULKAN)
 #include "scrapgpu/vulkan.h"
 #endif
+#if defined(SCRAPGPU_OPS_TEST_WITH_REMOTE)
+#include "scrapgpu/remote.h"
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -144,6 +147,9 @@ int64_t tn(const scrapgpu_tensor_desc & t) {
 scrapgpu_device_t * g_dev = nullptr;
 scrapgpu_stream_t * g_stream = nullptr;
 std::vector<scrapgpu_buffer_t *> g_buffers;
+#if defined(SCRAPGPU_OPS_TEST_WITH_REMOTE)
+scrapgpu_remote_t * g_remote = nullptr; // the spawned server, closed after the run
+#endif
 // the layout of quantized weight tensors on the selected backend: R32 for opencl11 (the repacked
 // layout), the natural GGUF block layout for vulkan
 scrapgpu_layout g_weight_layout = SCRAPGPU_LAYOUT_R32;
@@ -1181,6 +1187,48 @@ int main() {
         std::printf("SKIP: built without the Vulkan backend\n");
         return 77;
 #endif
+    } else if (std::strcmp(backend, "remote") == 0) {
+#if defined(SCRAPGPU_OPS_TEST_WITH_REMOTE)
+        // the whole suite runs through a spawned scrapgpu-device-server (backend opencl11 by
+        // default; SCRAPGPU_TEST_REMOTE_ENV carries ';'-separated KEY=VALUE overrides for it).
+        // The local opencl11 backend is registered too, so the tensor_copy test also exercises
+        // the remote <-> local transport.
+        std::vector<std::string> entries;
+        std::vector<const char *> envp;
+        const char * spec = std::getenv("SCRAPGPU_TEST_REMOTE_ENV");
+        if (spec != nullptr && spec[0] != '\0') {
+            const char * p = spec;
+            for (;;) {
+                const char * sep = std::strchr(p, ';');
+                entries.emplace_back(p, sep == nullptr ? p + std::strlen(p) : sep);
+                if (sep == nullptr) {
+                    break;
+                }
+                p = sep + 1;
+            }
+            for (const auto & e : entries) {
+                envp.push_back(e.c_str());
+            }
+            envp.push_back(nullptr);
+        }
+        if (scrapgpu_remote_spawn(envp.empty() ? nullptr : envp.data(), &g_remote) != SCRAPGPU_STATUS_OK) {
+            std::fprintf(stderr, "scrapgpu_remote_spawn failed: %s\n", scrapgpu_last_error());
+            return 1;
+        }
+#if defined(SCRAPGPU_OPS_TEST_WITH_OPENCL11)
+        if (scrapgpu_opencl11_register() != SCRAPGPU_STATUS_OK) {
+            std::fprintf(stderr, "scrapgpu_opencl11_register failed: %s\n", scrapgpu_last_error());
+            return 1;
+        }
+#endif
+        const char * rb = std::getenv("SCRAPGPU_REMOTE_BACKEND");
+        if (rb != nullptr && std::strstr(rb, "opencl11") == nullptr) {
+            g_weight_layout = SCRAPGPU_LAYOUT_NATURAL; // the server's backend is not opencl11
+        }
+#else
+        std::printf("SKIP: built without the remote backend\n");
+        return 77;
+#endif
     } else {
         std::fprintf(stderr, "unknown SCRAPGPU_TEST_BACKEND '%s'\n", backend);
         return 1;
@@ -1224,6 +1272,9 @@ int main() {
         CHECK_OK(scrapgpu_buffer_free(b));
     }
     CHECK_OK(scrapgpu_stream_free(g_stream));
+#if defined(SCRAPGPU_OPS_TEST_WITH_REMOTE)
+    scrapgpu_remote_close(g_remote); // stops and reaps the spawned server
+#endif
 
     std::printf("%d op runs, %d skipped\n", g_run, g_skipped);
     return 0;

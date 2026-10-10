@@ -180,3 +180,22 @@ Gate 1 non-representable items: **none**. Unsupported CL11 cases documented in `
 - 同じ device かどうかの判定のため、backend vtable の末尾に `stream_device`（stream が属する device を返す）を追加した。これに伴い `SCRAPGPU_ABI_VERSION_MINOR` を 3 → 4 に上げた（vtable 末尾への追加だけで後方互換）。`stream_device` を持たない（NULL の）バックエンドは常にホスト経由になる。正しいが同じ device でも host round trip が発生する。
 - 同じバッファ内で範囲が重なるコピーは、device copy の未定義動作を避けるためホスト経由に回す。
 - 各テンソルは自分の stream の device のバッファに載っていること（異なる組合せはバックエンドが `INVALID_ARGUMENT` で拒否する）。
+
+## 15. リモートバックエンド（別プロセスの device、P4）
+
+`remote` バックエンド（`include/scrapgpu/remote.h`、`src/backends/remote/`、CMake `SCRAPGPU_BUILD_REMOTE`、既定 OFF、Linux / macOS の POSIX のみ）は、サーバープロセス `scrapgpu-device-server` の device をクライアントの device 一覧（`scrapgpu_get_device`）に現す。vtable の全エントリを転送するので、Core の契約はそのまま透過される。ハンドルはサーバー側の id。
+
+- `scrapgpu_remote_spawn(env_spec, &out)`：`env_spec` は NULL 終端の `"KEY=VALUE"` 列で、サーバーの環境に上書きされる（例：`GGML_CL11_DEVICES=GT 430`、`GGML_CL11_PLATFORMS=NVIDIA`）。サーバーが登録するバックエンドは `SCRAPGPU_REMOTE_BACKEND`（カンマ区切り、既定 `opencl11`）。サーバーの実行ファイルは `SCRAPGPU_DEVICE_SERVER`、次に呼び出し元の実行ファイルと同じディレクトリの `scrapgpu-device-server`、最後に PATH。
+- `scrapgpu_remote_connect(socket_path, &out)`：起動済みサーバーのソケットに接続する（`scrapgpu-device-server --socket PATH --backend opencl11`）。
+- `scrapgpu_remote_close(remote)`：切断し、spawn したサーバーは終了させて回収する。サーバーはクライアントの切断で終了する。device / buffer / stream / plan は close 後に使えない。
+- device_get_info の `name` は `remote:` 接頭辞付き。`stream_device` はプロキシの同一性を返すので、同じサーバーの device 間の `tensor_copy` は 1 回の device copy 要求（BUFFER_COPY の転送）になり、リモート↔ローカルは 14 章のホスト経由になる（`buffer_read` / `buffer_write` が転送されるので Core の変更は要らない）。
+
+### プロトコル（概要）
+
+Unix ドメインソケット上で 1 要求 1 応答。メッセージは 16 バイトのヘッダ `{u32 magic, u32 code, u64 size}` とペイロード（little-endian）。応答は code に status、ペイロードの先頭にサーバー側の `scrapgpu_last_error()` の文字列を乗せる（クライアントは非 OK のとき自分の last_error に移す）。bulk データ（buffer read / write、tensor upload / download）はソケットではなく POSIX 共有メモリ（`shm_open` + `mmap`）を使う。HELLO の応答で名前と初期サイズ（1 MiB）を渡し、`SHM_ENSURE` で必要量まで倍々に拡大する。shm が使えない／足りないときはペイロードに同梱する。op の desc は入出力の tensor desc（buffer は id）と params の生バイトを送る。params 内の desc ポインタ（ROPE の `freq_factors` / `n_offs`、SOFT_MAX の `mask`）は NULL かどうかだけを保存し、受け側で inputs[] の該当要素を指すように張り替える（バックエンドの plan_build と同じ規則）。
+
+### コストと制限
+
+- 呼び出しごとに 1 往復（M2 Max で実測：アイドル `stream_sync` が約 11.5 µs、`op_execute` の投入だけで直接 +27 µs、`op_execute` + `stream_sync` で直接 +39 µs）。直接呼び出しに乗る固定費なので、立ち上げの少ない大きな kernel では目立たないが、小さい op を密に打つ使い方では効く。
+- remote の `buffer_write` / `buffer_read` は常にサーバー側で blocking に実行する（応答が転送の受け渡しなので、データが届く／読み終わるまで応答を返せない）。非 blocking の指定は「待たない」ではなく「待ちが必ず済んでいる」に強化される。
+- サーバーはクライアント 1 つ。ソケットと shm は同一ホスト内限定。クライアントが落ちるとサーバーは EOF で終了する（spawn 側の close は SIGKILL で締める）。リモート object を close 後に使うと DEVICE_LOST。connect した相手がクラッシュした後の呼び出しも同様に DEVICE_LOST。
