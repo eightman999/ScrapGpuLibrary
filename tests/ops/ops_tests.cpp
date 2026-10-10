@@ -19,6 +19,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <random>
+#include <string>
 #include <vector>
 
 #define CHECK(cond)                                                                          \
@@ -374,13 +375,14 @@ void run_one(const char * name, scrapgpu_op op, std::vector<TT> & ins, std::vect
             if (exact_equal(got, ref[i])) {
                 std::printf("PASS  %-24s out[%zu] exact (%zu elements)\n", name, i, got.size());
             } else {
-                std::fprintf(stderr, "%s out[%zu]: mismatch\n", name, i);
+                std::printf("FAIL  %-24s out[%zu] mismatch\n", name, i);
                 std::exit(1);
             }
         } else {
             const double e = nmse(got, ref[i]);
-            std::printf("PASS  %-24s out[%zu] NMSE %.3e (tol %.0e)\n", name, i, e, tol);
-            if (!(e <= tol)) {
+            const bool ok = e <= tol;
+            std::printf("%s  %-24s out[%zu] NMSE %.3e (tol %.0e)\n", ok ? "PASS" : "FAIL", name, i, e, tol);
+            if (!ok) {
                 std::exit(1);
             }
         }
@@ -979,8 +981,10 @@ void test_cont_mul_mat() {
 // elements of dim 1 contiguous, one row of the cache (all heads of a token) per n_kv step. This is the layout the
 // k_mvt_f16 kernel of the devices without mvt_groups (NVIDIA) needs (cl11_attn_ok: hd and n_kv multiples of 8,
 // 16-byte aligned rows, at most 8 query heads per cache head).
-void test_cont_mul_mat_vcache() {
-    const int64_t n_kv = 24, head_dim = 64, kv_heads = 2, q_heads = 8;
+// n_kv = 24 is below the slice count of a 1024-wide work-group (S = 64 for 16 lanes) and n_kv = 520 does not split
+// evenly into the S slices: both lost positions with the old slice size of k_mvt_f16 (floor(K / S) rounded to 8).
+void test_cont_mul_mat_vcache_k(int64_t n_kv) {
+    const int64_t head_dim = 64, kv_heads = 2, q_heads = 8;
     scrapgpu_tensor_desc ad = tdesc(SCRAPGPU_DTYPE_F16, n_kv, head_dim, kv_heads);
     ad.nb[0] = (uint64_t) head_dim * kv_heads * 2; // one cache row: every head of a token
     ad.nb[1] = 2;
@@ -1006,7 +1010,13 @@ void test_cont_mul_mat_vcache() {
     }
     std::vector<TT> ins = {a, x};
     std::vector<TT> outs = {d};
-    run_one("CONT_MUL_MAT V cache", SCRAPGPU_OP_CONT_MUL_MAT, ins, outs, nullptr, 0, {tfloats(dref[0])}, 1e-7, false);
+    const std::string name = "CONT_MUL_MAT V n_kv=" + std::to_string(n_kv);
+    run_one(name.c_str(), SCRAPGPU_OP_CONT_MUL_MAT, ins, outs, nullptr, 0, {tfloats(dref[0])}, 1e-7, false);
+}
+
+void test_cont_mul_mat_vcache() {
+    test_cont_mul_mat_vcache_k(24);
+    test_cont_mul_mat_vcache_k(520);
 }
 
 void test_buffer_ops() {
