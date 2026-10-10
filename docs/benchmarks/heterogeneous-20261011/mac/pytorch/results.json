@@ -1,0 +1,82 @@
+[
+  {
+    "stage": "build_cpu",
+    "status": "PASS",
+    "exit_code": 0,
+    "elapsed_seconds": 8.111,
+    "log": "/private/tmp/scrapgpu-heterogeneous-agents/mac-torch/build_cpu.log",
+    "started_at_jst": "2026-10-11T08:25:18.881928+09:00"
+  },
+  {
+    "stage": "cpu_test_ops",
+    "status": "PASS",
+    "exit_code": 0,
+    "elapsed_seconds": 1.919,
+    "log": "/private/tmp/scrapgpu-heterogeneous-agents/mac-torch/cpu_test_ops.log",
+    "started_at_jst": "2026-10-11T08:25:26.993423+09:00"
+  },
+  {
+    "stage": "cpu_test_attention",
+    "status": "PASS",
+    "exit_code": 0,
+    "elapsed_seconds": 1.216,
+    "log": "/private/tmp/scrapgpu-heterogeneous-agents/mac-torch/cpu_test_attention.log",
+    "started_at_jst": "2026-10-11T08:25:28.913346+09:00"
+  },
+  {
+    "stage": "cpu_test_backend_config",
+    "status": "PASS",
+    "exit_code": 0,
+    "elapsed_seconds": 6.356,
+    "log": "/private/tmp/scrapgpu-heterogeneous-agents/mac-torch/cpu_test_backend_config.log",
+    "started_at_jst": "2026-10-11T08:25:30.130221+09:00"
+  },
+  {
+    "stage": "cpu_mlp",
+    "status": "PASS",
+    "exit_code": 0,
+    "elapsed_seconds": 0.839,
+    "log": "/private/tmp/scrapgpu-heterogeneous-agents/mac-torch/cpu_mlp.log",
+    "started_at_jst": "2026-10-11T08:25:36.487038+09:00"
+  },
+  {
+    "stage": "build_opencl",
+    "status": "PASS",
+    "exit_code": 0,
+    "elapsed_seconds": 8.607,
+    "log": "/private/tmp/scrapgpu-heterogeneous-agents/mac-torch/build_opencl.log",
+    "started_at_jst": "2026-10-11T08:25:37.326660+09:00"
+  },
+  {
+    "stage": "opencl_test_ops",
+    "status": "PASS",
+    "exit_code": 0,
+    "elapsed_seconds": 1.922,
+    "log": "/private/tmp/scrapgpu-heterogeneous-agents/mac-torch/opencl_test_ops.log",
+    "started_at_jst": "2026-10-11T08:25:45.934154+09:00"
+  },
+  {
+    "stage": "opencl_test_attention",
+    "status": "PASS",
+    "exit_code": 0,
+    "elapsed_seconds": 1.385,
+    "log": "/private/tmp/scrapgpu-heterogeneous-agents/mac-torch/opencl_test_attention.log",
+    "started_at_jst": "2026-10-11T08:25:47.856397+09:00"
+  },
+  {
+    "stage": "opencl_fallback_disabled",
+    "status": "PASS",
+    "exit_code": 0,
+    "elapsed_seconds": 0.889,
+    "log": "/private/tmp/scrapgpu-heterogeneous-agents/mac-torch/opencl_fallback_disabled.log",
+    "started_at_jst": "2026-10-11T08:25:49.241606+09:00"
+  },
+  {
+    "stage": "opencl_fallback_zero_budget",
+    "status": "PASS",
+    "exit_code": 0,
+    "elapsed_seconds": 0.893,
+    "log": "/private/tmp/scrapgpu-heterogeneous-agents/mac-torch/opencl_fallback_zero_budget.log",
+    "started_at_jst": "2026-10-11T08:25:50.131290+09:00"
+  }
+]

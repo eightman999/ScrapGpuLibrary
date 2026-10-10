@@ -1,0 +1,23 @@
+{
+  "final_outcome": "PASS",
+  "host": "6f",
+  "cpu": "Intel Core i5-3230M",
+  "python": "3.14.4",
+  "torch": "2.14.1+cpu",
+  "backend": "cpu",
+  "build_opencl11": false,
+  "venv": "/home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/torch-venv",
+  "tests_passed": 4,
+  "tests_total": 4,
+  "historical_failure": "Initial python -m venv failed because ensurepip was absent; official get-pip bootstrap subsequently succeeded in verified dedicated venv.",
+  "bootstrap_url": "https://bootstrap.pypa.io/get-pip.py",
+  "bootstrap_sha256": "fb24e693bab954209a063d90953621412ccad4a500905a726286e038f508ddf6",
+  "bootstrap_reference": "https://pip.pypa.io/en/stable/installation/",
+  "max_op_nmse": 1.283e-13,
+  "attention_oracles": 18,
+  "attention_rejections": 16,
+  "attention_concurrent_calls": 12,
+  "mlp_f32_max_abs_diff": 1.639128e-07,
+  "mlp_q4_0_max_abs_diff": 0.04155272,
+  "records": "/private/tmp/scrapgpu-heterogeneous-agents/6f-torch/results.json"
+}

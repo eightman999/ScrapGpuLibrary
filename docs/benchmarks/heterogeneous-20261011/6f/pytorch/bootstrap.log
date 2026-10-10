@@ -1,0 +1,15 @@
+# 2026-10-11T08:23:21.442442+09:00
+# /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/torch-venv/bin/python -I -c 'import pathlib,sys; p=pathlib.Path(sys.prefix).resolve(); print("sys.prefix",p); print("sys.base_prefix",sys.base_prefix); assert sys.prefix != sys.base_prefix; assert p == pathlib.Path("/home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/torch-venv").resolve()' && curl --fail --location --proto =https --tlsv1.2 --retry 0 --max-time 120 https://bootstrap.pypa.io/get-pip.py --output /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/get-pip.py && sha256sum /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/get-pip.py && timeout -k 10 180 /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/torch-venv/bin/python -I /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/get-pip.py --isolated --no-input --disable-pip-version-check --cache-dir /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/pip-cache --index-url https://pypi.org/simple --retries 0 && /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/torch-venv/bin/python -I -c 'import pathlib,pip,sys; print("pip", pip.__version__, pip.__file__); assert pathlib.Path(pip.__file__).resolve().is_relative_to(pathlib.Path(sys.prefix).resolve())'
+sys.prefix /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/torch-venv
+sys.base_prefix /usr
+  % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
+                                 Dload  Upload  Total   Spent   Left   Speed
+  0      0   0      0   0      0      0      0                              0100  2.12M 100  2.12M   0      0  7.81M      0                              0100  2.12M 100  2.12M   0      0  7.80M      0                              0100  2.12M 100  2.12M   0      0  7.80M      0                              0
+fb24e693bab954209a063d90953621412ccad4a500905a726286e038f508ddf6  /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/get-pip.py
+Collecting pip
+  Downloading pip-26.2.1-py3-none-any.whl.metadata (4.6 kB)
+Downloading pip-26.2.1-py3-none-any.whl (1.8 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.8/1.8 MB 10.5 MB/s  0:00:00
+Installing collected packages: pip
+Successfully installed pip-26.2.1
+pip 26.2.1 /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/torch-venv/lib/python3.14/site-packages/pip/__init__.py

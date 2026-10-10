@@ -1,0 +1,5 @@
+cl11_ensure_program: rebuilding the kernels with smaller work-groups
+cl11_ensure_program: CL11_0: AMD Radeon Pro WX 2100 (radeonsi, polaris12, ACO, DRM 3.61, 6.12.107+deb13-amd64), OpenCL 3.0 , kernels built (work-group sizes: element-wise 128, row 128, mat-vec 128, mat-mat 16x16)
+device=AMD Radeon Pro WX 2100 (radeonsi, polaris12, ACO, DRM 3.61, 6.12.107+deb13-amd64) backend=opencl11 driver=OpenCL 3.0  used_api=OpenCL 1.1 tuning=AMD (GCN)
+dtype=F32 path=native ms=0.610395 staging=0 download=0 upload=0 nmse=0 PASS
+dtype=BF16 path=cpu_fallback ms=0.508986 staging=53248 download=53248 upload=4096 nmse=0 PASS

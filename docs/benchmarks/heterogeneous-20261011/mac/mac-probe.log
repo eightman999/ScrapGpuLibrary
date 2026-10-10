@@ -1,0 +1,4 @@
+cl11_ensure_program: CL11_0: Apple M2 Max, OpenCL 1.2 , kernels built (work-group sizes: element-wise 128, row 128, mat-vec 128, mat-mat 16x16)
+device=Apple M2 Max backend=opencl11 driver=OpenCL 1.2  used_api=OpenCL 1.1 tuning=default
+dtype=F32 path=native ms=0.662258 staging=0 download=0 upload=0 nmse=0 PASS
+dtype=BF16 path=cpu_fallback ms=1.195108 staging=53248 download=53248 upload=4096 nmse=0 PASS

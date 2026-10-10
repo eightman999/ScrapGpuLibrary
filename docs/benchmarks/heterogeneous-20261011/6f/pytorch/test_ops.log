@@ -1,0 +1,28 @@
+# 2026-10-11T08:24:45.137771+09:00
+# timeout -k 10 180 env PYTHONDONTWRITEBYTECODE=1 SCRAPGPU_TORCH_BACKEND=cpu SCRAPGPU_TORCH_DEVICE=0 SCRAPGPU_TORCH_ALLOW_CPU_FALLBACK=0 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/torch-venv/bin/python -u /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/src/adapters/pytorch/tests/test_ops.py
+/home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/torch-venv/lib/python3.14/site-packages/torch/_subclasses/functional_tensor.py:368: UserWarning: Failed to initialize NumPy: No module named 'numpy' (Triggered internally at /__w/pytorch/pytorch/torch/csrc/utils/tensor_numpy.cpp:84.)
+  cpu = _conversion_method_template(device=torch.device("cpu"))
+device: CPU; torch=2.14.1+cpu
+dtype/autograd/schema rejections and 12 concurrent linear/add calls OK
+  linear_f32: NMSE 3.939e-14 OK
+  linear_vec_f32: NMSE 1.718e-14 OK
+  linear_f16: NMSE 4.390e-14 OK
+  linear_bf16: NMSE 3.927e-14 OK
+  linear_f16_subnormal: NMSE 4.300e-14 OK
+  linear_q4_0: NMSE 3.187e-14 OK
+  linear_q8_0: NMSE 4.746e-14 OK
+  linear_q4_k: NMSE 1.283e-13 OK
+  linear_q6_k: NMSE 5.834e-14 OK
+  add: NMSE 0.000e+00 OK
+  silu: NMSE 0.000e+00 OK
+  rms_norm: NMSE 9.261e-16 OK
+  rope: NMSE 0.000e+00 OK
+  add_empty: NMSE 0.000e+00 OK
+  silu_empty: NMSE 0.000e+00 OK
+  rms_norm_empty: NMSE 0.000e+00 OK
+  add_empty_inner: NMSE 0.000e+00 OK
+  rope_empty: NMSE 0.000e+00 OK
+  module_initial: NMSE 3.939e-14 OK
+  module_weight_update: NMSE 3.217e-14 OK
+  module_inference_mode: NMSE 3.939e-14 OK
+all ops OK

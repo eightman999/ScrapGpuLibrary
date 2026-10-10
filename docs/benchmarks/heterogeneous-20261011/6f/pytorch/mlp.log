@@ -1,0 +1,7 @@
+# 2026-10-11T08:25:05.959158+09:00
+# timeout -k 10 180 env PYTHONDONTWRITEBYTECODE=1 SCRAPGPU_TORCH_BACKEND=cpu SCRAPGPU_TORCH_DEVICE=0 SCRAPGPU_TORCH_ALLOW_CPU_FALLBACK=0 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/torch-venv/bin/python -u /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/src/adapters/pytorch/examples/mlp.py
+/home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/torch-venv/lib/python3.14/site-packages/torch/_subclasses/functional_tensor.py:368: UserWarning: Failed to initialize NumPy: No module named 'numpy' (Triggered internally at /__w/pytorch/pytorch/torch/csrc/utils/tensor_numpy.cpp:84.)
+  cpu = _conversion_method_template(device=torch.device("cpu"))
+max abs diff (q4_0 MLP vs nn.Linear): 4.155272e-02
+OK
+max abs diff (f32 ScrapMLP vs nn.Linear): 1.639128e-07

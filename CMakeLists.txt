@@ -36,6 +36,8 @@ endif()
 if (SCRAPGPU_BUILD_CORE)
     add_library(scrapgpu_core
         src/core/op.cpp
+        src/core/compat.cpp
+        src/core/attention.cpp
         src/core/ref/f16.cpp
         src/core/ref/ops.cpp
         src/core/ref/quant.cpp
@@ -43,12 +45,14 @@ if (SCRAPGPU_BUILD_CORE)
         src/core/status.cpp
         src/core/tensor.cpp
         src/core/transport.cpp)
+    target_sources(scrapgpu_core PRIVATE src/backends/cpu/api.cpp)
     target_include_directories(scrapgpu_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
     target_link_libraries(scrapgpu_core PRIVATE scrapgpu_tensor)
     target_compile_features(scrapgpu_core PUBLIC cxx_std_17)
     set_target_properties(scrapgpu_core PROPERTIES
         CXX_VISIBILITY_PRESET hidden
-        VISIBILITY_INLINES_HIDDEN ON)
+        VISIBILITY_INLINES_HIDDEN ON
+        POSITION_INDEPENDENT_CODE ON)
 endif()
 
 if (SCRAPGPU_BUILD_BENCHMARKS)
@@ -98,7 +102,7 @@ if (SCRAPGPU_BUILD_OPENCL11)
     target_include_directories(scrapgpu_opencl11_api PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(scrapgpu_opencl11_api PUBLIC scrapgpu_core scrapgpu_opencl11)
     target_compile_features(scrapgpu_opencl11_api PUBLIC cxx_std_17)
-    set_target_properties(scrapgpu_opencl11_api PROPERTIES CXX_VISIBILITY_PRESET hidden)
+    set_target_properties(scrapgpu_opencl11_api PROPERTIES CXX_VISIBILITY_PRESET hidden POSITION_INDEPENDENT_CODE ON)
 endif()
 
 if (SCRAPGPU_BUILD_VULKAN)
@@ -172,8 +176,8 @@ if (SCRAPGPU_BUILD_GGML_ADAPTER)
 endif()
 
 if (SCRAPGPU_BUILD_PYTORCH)
-    if (NOT SCRAPGPU_BUILD_OPENCL11)
-        message(FATAL_ERROR "SCRAPGPU_BUILD_PYTORCH requires SCRAPGPU_BUILD_OPENCL11=ON")
+    if (NOT SCRAPGPU_BUILD_CORE)
+        message(FATAL_ERROR "SCRAPGPU_BUILD_PYTORCH requires SCRAPGPU_BUILD_CORE=ON")
     endif ()
     add_subdirectory(adapters/pytorch)
 endif ()
@@ -187,6 +191,29 @@ if (SCRAPGPU_BUILD_TESTS AND SCRAPGPU_BUILD_CORE)
     add_executable(scrapgpu_core_contract_tests tests/core/core_contract_tests.cpp)
     target_link_libraries(scrapgpu_core_contract_tests PRIVATE scrapgpu_core)
     add_test(NAME scrapgpu_core_contract_tests COMMAND scrapgpu_core_contract_tests)
+
+    add_executable(scrapgpu_compat_tests tests/core/compat_tests.cpp)
+    target_link_libraries(scrapgpu_compat_tests PRIVATE scrapgpu_core)
+    add_test(NAME scrapgpu_compat_tests COMMAND scrapgpu_compat_tests)
+
+    add_executable(scrapgpu_cpu_tests tests/cpu/cpu_tests.cpp)
+    target_link_libraries(scrapgpu_cpu_tests PRIVATE scrapgpu_core)
+    add_test(NAME scrapgpu_cpu_tests COMMAND scrapgpu_cpu_tests)
+
+    add_executable(scrapgpu_cpu_boundary_tests tests/cpu/boundary_tests.cpp)
+    target_link_libraries(scrapgpu_cpu_boundary_tests PRIVATE scrapgpu_core)
+    add_test(NAME scrapgpu_cpu_boundary_tests COMMAND scrapgpu_cpu_boundary_tests)
+
+    add_executable(scrapgpu_attention_tests tests/attention/attention_tests.cpp)
+    target_link_libraries(scrapgpu_attention_tests PRIVATE scrapgpu_core)
+    add_test(NAME scrapgpu_attention_tests COMMAND scrapgpu_attention_tests)
+    set_tests_properties(scrapgpu_attention_tests PROPERTIES ENVIRONMENT "SCRAPGPU_TEST_BACKEND=cpu")
+    if (SCRAPGPU_BUILD_OPENCL11)
+        target_link_libraries(scrapgpu_attention_tests PRIVATE scrapgpu_opencl11_api)
+        target_compile_definitions(scrapgpu_attention_tests PRIVATE SCRAPGPU_ATTENTION_TEST_WITH_OPENCL11)
+        add_test(NAME scrapgpu_attention_tests_opencl11 COMMAND scrapgpu_attention_tests)
+        set_tests_properties(scrapgpu_attention_tests_opencl11 PROPERTIES ENVIRONMENT "SCRAPGPU_TEST_BACKEND=opencl11" SKIP_RETURN_CODE 77)
+    endif()
 
     add_executable(scrapgpu_public_headers_c tests/core/public_headers_c.c)
     target_link_libraries(scrapgpu_public_headers_c PRIVATE scrapgpu_core)
@@ -219,6 +246,9 @@ if (SCRAPGPU_BUILD_TESTS AND SCRAPGPU_BUILD_CORE)
     if (SCRAPGPU_BUILD_OPENCL11 OR SCRAPGPU_BUILD_VULKAN)
         add_executable(scrapgpu_ops_tests tests/ops/ops_tests.cpp)
         if (SCRAPGPU_BUILD_OPENCL11)
+            add_executable(scrapgpu_device_policy_tests tests/core/device_policy_tests.cpp)
+            target_link_libraries(scrapgpu_device_policy_tests PRIVATE scrapgpu_opencl11)
+            add_test(NAME scrapgpu_device_policy_tests COMMAND scrapgpu_device_policy_tests)
             target_link_libraries(scrapgpu_ops_tests PRIVATE scrapgpu_opencl11_api)
             target_compile_definitions(scrapgpu_ops_tests PRIVATE SCRAPGPU_OPS_TEST_WITH_OPENCL11)
             add_test(NAME scrapgpu_ops_tests COMMAND scrapgpu_ops_tests)
@@ -272,4 +302,17 @@ if (SCRAPGPU_BUILD_EXAMPLES)
         target_compile_definitions(scrapgpu_pipeline_mlp PRIVATE SCRAPGPU_EXAMPLE_WITH_REMOTE)
     endif()
     set_target_properties(scrapgpu_pipeline_mlp PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED ON)
+endif()
+
+if (SCRAPGPU_BUILD_BENCHMARKS)
+    add_executable(scrapgpu_compat_probe tools/compat_probe.cpp)
+    target_link_libraries(scrapgpu_compat_probe PRIVATE scrapgpu_core)
+    if (SCRAPGPU_BUILD_OPENCL11)
+        target_link_libraries(scrapgpu_compat_probe PRIVATE scrapgpu_opencl11_api)
+        target_compile_definitions(scrapgpu_compat_probe PRIVATE SCRAPGPU_PROBE_OPENCL11)
+    endif()
+    if (SCRAPGPU_BUILD_VULKAN)
+        target_link_libraries(scrapgpu_compat_probe PRIVATE scrapgpu_vulkan_api)
+        target_compile_definitions(scrapgpu_compat_probe PRIVATE SCRAPGPU_PROBE_VULKAN)
+    endif()
 endif()

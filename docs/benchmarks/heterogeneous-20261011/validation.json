@@ -1,0 +1,191 @@
+{
+  "base_commit": "258e7085ee25b447ea107a40629f476b8802b17c",
+  "source_archive_sha256": "4fd06b5eaadda1525dfc7277adac25de441700b44c18f83fd08e668f50ebe044",
+  "llama_commit": "23b0202a189c44a54625aadcb37a946dd1d6278d",
+  "llama_archive_sha256": "fb1c36d8173b4800e84a6e80ab96232868da9ae1ac816178bcf647108dbfb9c6",
+  "mac_ctest": {
+    "passed": 15,
+    "skipped": 0
+  },
+  "mac_sanitizers": {
+    "passed": 12
+  },
+  "tb250_ctest": {
+    "passed": 18,
+    "skipped": 0
+  },
+  "6f_ctest": {
+    "passed": 12,
+    "skipped": 0
+  },
+  "tb250_pytorch": {
+    "passed": 13,
+    "version": "2.14.1+cpu"
+  },
+  "gpus": {
+    "gt730": {
+      "greedy_matches_cpu_fa_off": true,
+      "greedy_text": "____.\nA. Paris\nB. Rome\nC. London\nD.",
+      "ADD": {
+        "executed_pass": 46,
+        "unsupported": 0
+      },
+      "MUL_MAT": {
+        "executed_pass": 72,
+        "unsupported": 12
+      },
+      "c_api_counts": "81 op runs, 2 skipped",
+      "bench": [
+        {
+          "prompt": 32,
+          "generation": 0,
+          "tokens_per_second": 122.079566,
+          "stddev": 0.173902
+        },
+        {
+          "prompt": 0,
+          "generation": 16,
+          "tokens_per_second": 36.805983,
+          "stddev": 0.00367
+        }
+      ],
+      "probe": [
+        "dtype=F32 path=native ms=0.092466 staging=0 download=0 upload=0 nmse=0 PASS",
+        "dtype=BF16 path=cpu_fallback ms=0.246512 staging=53248 download=53248 upload=4096 nmse=0 PASS"
+      ]
+    },
+    "gt430": {
+      "greedy_matches_cpu_fa_off": true,
+      "greedy_text": "____.\nA. Paris\nB. Rome\nC. London\nD.",
+      "ADD": {
+        "executed_pass": 46,
+        "unsupported": 0
+      },
+      "MUL_MAT": {
+        "executed_pass": 72,
+        "unsupported": 12
+      },
+      "c_api_counts": "81 op runs, 2 skipped",
+      "bench": [
+        {
+          "prompt": 32,
+          "generation": 0,
+          "tokens_per_second": 27.805194,
+          "stddev": 0.00213
+        },
+        {
+          "prompt": 0,
+          "generation": 16,
+          "tokens_per_second": 22.852795,
+          "stddev": 0.077604
+        }
+      ],
+      "probe": [
+        "dtype=F32 path=native ms=0.139921 staging=0 download=0 upload=0 nmse=0 PASS",
+        "dtype=BF16 path=cpu_fallback ms=0.254994 staging=53248 download=53248 upload=4096 nmse=0 PASS"
+      ]
+    },
+    "gt710": {
+      "greedy_matches_cpu_fa_off": true,
+      "greedy_text": "____.\nA. Paris\nB. Rome\nC. London\nD.",
+      "ADD": {
+        "executed_pass": 46,
+        "unsupported": 0
+      },
+      "MUL_MAT": {
+        "executed_pass": 72,
+        "unsupported": 12
+      },
+      "c_api_counts": "81 op runs, 2 skipped",
+      "bench": [
+        {
+          "prompt": 32,
+          "generation": 0,
+          "tokens_per_second": 62.027658,
+          "stddev": 0.069249
+        },
+        {
+          "prompt": 0,
+          "generation": 16,
+          "tokens_per_second": 16.648733,
+          "stddev": 0.014987
+        }
+      ],
+      "probe": [
+        "dtype=F32 path=native ms=0.092513 staging=0 download=0 upload=0 nmse=0 PASS",
+        "dtype=BF16 path=cpu_fallback ms=0.246955 staging=53248 download=53248 upload=4096 nmse=0 PASS"
+      ]
+    },
+    "wx2100": {
+      "greedy_matches_cpu_fa_off": true,
+      "greedy_text": "____.\nA. Paris\nB. Rome\nC. London\nD.",
+      "ADD": {
+        "executed_pass": 46,
+        "unsupported": 0
+      },
+      "MUL_MAT": {
+        "executed_pass": 72,
+        "unsupported": 12
+      },
+      "c_api_counts": "82 op runs, 1 skipped",
+      "bench": [
+        {
+          "prompt": 32,
+          "generation": 0,
+          "tokens_per_second": 143.185612,
+          "stddev": 0.712622
+        },
+        {
+          "prompt": 0,
+          "generation": 16,
+          "tokens_per_second": 17.112468,
+          "stddev": 1.053362
+        }
+      ],
+      "probe": [
+        "dtype=F32 path=native ms=0.610395 staging=0 download=0 upload=0 nmse=0 PASS",
+        "dtype=BF16 path=cpu_fallback ms=0.508986 staging=53248 download=53248 upload=4096 nmse=0 PASS"
+      ]
+    },
+    "rx6400": {
+      "greedy_matches_cpu_fa_off": true,
+      "greedy_text": "____.\nA. Paris\nB. Rome\nC. London\nD.",
+      "ADD": {
+        "executed_pass": 46,
+        "unsupported": 0
+      },
+      "MUL_MAT": {
+        "executed_pass": 72,
+        "unsupported": 12
+      },
+      "c_api_counts": "82 op runs, 1 skipped",
+      "bench": [
+        {
+          "prompt": 32,
+          "generation": 0,
+          "tokens_per_second": 259.427714,
+          "stddev": 2.755528
+        },
+        {
+          "prompt": 0,
+          "generation": 16,
+          "tokens_per_second": 24.67012,
+          "stddev": 0.815908
+        }
+      ],
+      "probe": [
+        "dtype=F32 path=native ms=0.644622 staging=0 download=0 upload=0 nmse=0 PASS",
+        "dtype=BF16 path=cpu_fallback ms=0.520703 staging=53248 download=53248 upload=4096 nmse=0 PASS"
+      ]
+    }
+  },
+  "6f_pytorch": {
+    "version": "2.14.1+cpu",
+    "tests_passed": 4,
+    "tests_failed": 0
+  },
+  "mac_pytorch": {
+    "version": "2.14.1",
+    "builds_and_tests_passed": 10
+  }
+}

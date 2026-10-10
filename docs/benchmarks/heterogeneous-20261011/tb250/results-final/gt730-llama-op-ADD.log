@@ -1,0 +1,63 @@
+load_backend: loaded CPU backend from /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/llama-build/bin/libggml-cpu.so
+load_backend: loaded CL11 backend from /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/build/adapters/ggml/libggml-cl11.so
+cl11_ensure_program: CL11_0: multi mat-vec (Q / K / V, FFN gate / up in one launch) enabled
+cl11_ensure_program: CL11_0: mat-mat variant: tile 64 x 64, 8 x 4 values per work-item, BK 16, unroll 16, prefetch 0, 128 work-items
+cl11_ensure_program: CL11_0: GeForce GT 730, OpenCL 1.2 CUDA, kernels built (work-group sizes: element-wise 128, row 128, mat-vec 128, mat-mat 16x16)
+Testing 2 devices
+
+Backend 1/2: CPU
+  Skipping
+Backend 2/2: CL11_0
+  Device description: GeForce GT 730
+  Device memory: 981 MB (853 MB free)
+
+  ADD(type=f32,ne=[1,1,8,1],nr=[1,1,1,1],nf=1,perm1=0,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[1,1,1,1],nr=[32,1,1,1],nf=1,perm1=0,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[1,1,320,320],nr=[1,1,1,1],nf=1,perm1=0,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[10,5,1,1],nr=[1,1,1,1],nf=1,perm1=0,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[10,5,4,1],nr=[1,1,1,1],nf=1,perm1=0,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[10,5,4,3],nr=[1,1,1,1],nf=1,perm1=0,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[10,5,4,3],nr=[2,1,1,1],nf=1,perm1=0,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[10,5,4,3],nr=[1,2,1,1],nf=1,perm1=0,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[10,5,4,3],nr=[1,1,2,1],nf=1,perm1=0,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[10,5,4,3],nr=[1,1,1,2],nf=1,perm1=0,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[10,5,4,3],nr=[1,1,2,2],nf=1,perm1=0,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[10,5,4,3],nr=[1,2,2,2],nf=1,perm1=0,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[10,5,4,3],nr=[2,2,2,2],nf=1,perm1=0,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[1,1,8,1],nr=[1,1,1,1],nf=1,perm1=1,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[1,1,1,1],nr=[32,1,1,1],nf=1,perm1=1,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[1,1,320,320],nr=[1,1,1,1],nf=1,perm1=1,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[10,5,1,1],nr=[1,1,1,1],nf=1,perm1=1,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[10,5,4,1],nr=[1,1,1,1],nf=1,perm1=1,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[10,5,4,3],nr=[1,1,1,1],nf=1,perm1=1,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[10,5,4,3],nr=[2,1,1,1],nf=1,perm1=1,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[10,5,4,3],nr=[1,2,1,1],nf=1,perm1=1,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[10,5,4,3],nr=[1,1,2,1],nf=1,perm1=1,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[10,5,4,3],nr=[1,1,1,2],nf=1,perm1=1,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[10,5,4,3],nr=[1,1,2,2],nf=1,perm1=1,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[10,5,4,3],nr=[1,2,2,2],nf=1,perm1=1,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[10,5,4,3],nr=[2,2,2,2],nf=1,perm1=1,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[10,5,4,6],nr=[1,1,1,1],nf=1,perm1=0,src_overlap=1): [1;32mOK[0m
+  ADD(type=f32,ne=[10,5,4,5],nr=[1,1,1,1],nf=1,perm1=0,src_overlap=1): [1;32mOK[0m
+  ADD(type=f32,ne=[1,1,120,120],nr=[1,1,1,1],nf=1,perm1=0,src_overlap=1): [1;32mOK[0m
+  ADD(type=f32,ne=[1,1,4,320],nr=[1,1,1,1],nf=1,perm1=0,src_overlap=1): [1;32mOK[0m
+  ADD(type=f32,ne=[1,1,65536,1],nr=[256,1,1,1],nf=1,perm1=0,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[1280,1,1,1],nr=[1,1,1,1],nf=1,perm1=0,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[1280,1,1,1],nr=[1,16,16,1],nf=1,perm1=0,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[1280,16,16,1],nr=[1,1,1,1],nf=1,perm1=0,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[1280,1,1,1],nr=[1,256,1,1],nf=1,perm1=0,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[1,1,1280,1],nr=[16,16,1,1],nf=1,perm1=0,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[16,16,1280,1],nr=[1,1,1,1],nf=1,perm1=0,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[1,1,1920,1],nr=[16,16,1,1],nf=1,perm1=0,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[1,1,2560,1],nr=[16,16,1,1],nf=1,perm1=0,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[1,1,1280,1],nr=[32,32,1,1],nf=1,perm1=0,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[1,1,1920,1],nr=[32,32,1,1],nf=1,perm1=0,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[1,1,640,1],nr=[32,32,1,1],nf=1,perm1=0,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[5120,1,1,1],nr=[1,256,1,1],nf=1,perm1=0,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[640,1,1,1],nr=[1,1,1,1],nf=1,perm1=0,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[64,262144,1,1],nr=[1,1,1,1],nf=1,perm1=0,src_overlap=0): [1;32mOK[0m
+  ADD(type=f32,ne=[128,1,8,1],nr=[1,4,1,1],nf=1,perm1=0,src_overlap=0): [1;32mOK[0m
+  46/46 tests passed
+  Backend CL11_0: [1;32mOK[0m
+2/2 backends passed
+[1;32mOK[0m

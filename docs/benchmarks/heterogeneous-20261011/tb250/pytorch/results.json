@@ -1,0 +1,132 @@
+[
+  {
+    "target": "cpu",
+    "test": "ops",
+    "status": "PASS",
+    "exit_code": 0,
+    "elapsed_seconds_including_lock_wait": 5.195,
+    "log": "cpu_ops.log",
+    "remote_command": "flock -w 300 /home/eightman/bench/gpu-bench.lock timeout -k 10 180 env SCRAPGPU_TORCH_BACKEND=cpu SCRAPGPU_TORCH_DEVICE=0 SCRAPGPU_TORCH_ALLOW_CPU_FALLBACK=0 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 THERMAL_WAIT_MAX=120 /home/eightman/bench/conv-venv/bin/python -u /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/src/adapters/pytorch/tests/test_ops.py",
+    "started_at_jst": "2026-10-11T08:14:25.699613+09:00"
+  },
+  {
+    "target": "cpu",
+    "test": "attention",
+    "status": "PASS",
+    "exit_code": 0,
+    "elapsed_seconds_including_lock_wait": 3.882,
+    "log": "cpu_attention.log",
+    "remote_command": "flock -w 300 /home/eightman/bench/gpu-bench.lock timeout -k 10 180 env SCRAPGPU_TORCH_BACKEND=cpu SCRAPGPU_TORCH_DEVICE=0 SCRAPGPU_TORCH_ALLOW_CPU_FALLBACK=0 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 THERMAL_WAIT_MAX=120 /home/eightman/bench/conv-venv/bin/python -u /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/src/adapters/pytorch/tests/test_attention.py",
+    "started_at_jst": "2026-10-11T08:14:30.895872+09:00"
+  },
+  {
+    "target": "cpu",
+    "test": "backend_config",
+    "status": "PASS",
+    "exit_code": 0,
+    "elapsed_seconds_including_lock_wait": 13.506,
+    "log": "cpu_backend_config.log",
+    "remote_command": "flock -w 300 /home/eightman/bench/gpu-bench.lock timeout -k 10 180 env SCRAPGPU_TORCH_BACKEND=cpu SCRAPGPU_TORCH_DEVICE=0 SCRAPGPU_TORCH_ALLOW_CPU_FALLBACK=0 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 THERMAL_WAIT_MAX=120 /home/eightman/bench/conv-venv/bin/python -u /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/src/adapters/pytorch/tests/test_backend_config.py",
+    "started_at_jst": "2026-10-11T08:14:34.779913+09:00"
+  },
+  {
+    "target": "gt730",
+    "test": "ops",
+    "status": "PASS",
+    "exit_code": 0,
+    "elapsed_seconds_including_lock_wait": 7.184,
+    "log": "gt730_ops.log",
+    "remote_command": "flock -w 300 /home/eightman/bench/gpu-bench.lock timeout -k 10 180 env SCRAPGPU_TORCH_BACKEND=opencl11 SCRAPGPU_TORCH_DEVICE=0 SCRAPGPU_TORCH_ALLOW_CPU_FALLBACK=1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 THERMAL_WAIT_MAX=120 GGML_CL11_PLATFORMS=NVIDIA bash /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/src/adapters/ggml/tools/kepler-sweep/gpu_exec.sh 'GT 730' /home/eightman/bench/conv-venv/bin/python -u /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/src/adapters/pytorch/tests/test_ops.py",
+    "started_at_jst": "2026-10-11T08:14:48.288017+09:00"
+  },
+  {
+    "target": "gt730",
+    "test": "attention",
+    "status": "PASS",
+    "exit_code": 0,
+    "elapsed_seconds_including_lock_wait": 7.23,
+    "log": "gt730_attention.log",
+    "remote_command": "flock -w 300 /home/eightman/bench/gpu-bench.lock timeout -k 10 180 env SCRAPGPU_TORCH_BACKEND=opencl11 SCRAPGPU_TORCH_DEVICE=0 SCRAPGPU_TORCH_ALLOW_CPU_FALLBACK=1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 THERMAL_WAIT_MAX=120 GGML_CL11_PLATFORMS=NVIDIA bash /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/src/adapters/ggml/tools/kepler-sweep/gpu_exec.sh 'GT 730' /home/eightman/bench/conv-venv/bin/python -u /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/src/adapters/pytorch/tests/test_attention.py",
+    "started_at_jst": "2026-10-11T08:14:55.473239+09:00"
+  },
+  {
+    "target": "gt430",
+    "test": "ops",
+    "status": "PASS",
+    "exit_code": 0,
+    "elapsed_seconds_including_lock_wait": 6.509,
+    "log": "gt430_ops.log",
+    "remote_command": "flock -w 300 /home/eightman/bench/gpu-bench.lock timeout -k 10 180 env SCRAPGPU_TORCH_BACKEND=opencl11 SCRAPGPU_TORCH_DEVICE=0 SCRAPGPU_TORCH_ALLOW_CPU_FALLBACK=1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 THERMAL_WAIT_MAX=120 GGML_CL11_PLATFORMS=NVIDIA bash /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/src/adapters/ggml/tools/kepler-sweep/gpu_exec.sh 'GT 430' /home/eightman/bench/conv-venv/bin/python -u /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/src/adapters/pytorch/tests/test_ops.py",
+    "started_at_jst": "2026-10-11T08:15:02.704970+09:00"
+  },
+  {
+    "target": "gt430",
+    "test": "attention",
+    "status": "PASS",
+    "exit_code": 0,
+    "elapsed_seconds_including_lock_wait": 6.524,
+    "log": "gt430_attention.log",
+    "remote_command": "flock -w 300 /home/eightman/bench/gpu-bench.lock timeout -k 10 180 env SCRAPGPU_TORCH_BACKEND=opencl11 SCRAPGPU_TORCH_DEVICE=0 SCRAPGPU_TORCH_ALLOW_CPU_FALLBACK=1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 THERMAL_WAIT_MAX=120 GGML_CL11_PLATFORMS=NVIDIA bash /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/src/adapters/ggml/tools/kepler-sweep/gpu_exec.sh 'GT 430' /home/eightman/bench/conv-venv/bin/python -u /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/src/adapters/pytorch/tests/test_attention.py",
+    "started_at_jst": "2026-10-11T08:15:09.216398+09:00"
+  },
+  {
+    "target": "gt710",
+    "test": "ops",
+    "status": "PASS",
+    "exit_code": 0,
+    "elapsed_seconds_including_lock_wait": 6.599,
+    "log": "gt710_ops.log",
+    "remote_command": "flock -w 300 /home/eightman/bench/gpu-bench.lock timeout -k 10 180 env SCRAPGPU_TORCH_BACKEND=opencl11 SCRAPGPU_TORCH_DEVICE=0 SCRAPGPU_TORCH_ALLOW_CPU_FALLBACK=1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 THERMAL_WAIT_MAX=120 GGML_CL11_PLATFORMS=NVIDIA bash /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/src/adapters/ggml/tools/kepler-sweep/gpu_exec.sh 'GT 710' /home/eightman/bench/conv-venv/bin/python -u /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/src/adapters/pytorch/tests/test_ops.py",
+    "started_at_jst": "2026-10-11T08:15:15.742314+09:00"
+  },
+  {
+    "target": "gt710",
+    "test": "attention",
+    "status": "PASS",
+    "exit_code": 0,
+    "elapsed_seconds_including_lock_wait": 10.018,
+    "log": "gt710_attention.log",
+    "remote_command": "flock -w 300 /home/eightman/bench/gpu-bench.lock timeout -k 10 180 env SCRAPGPU_TORCH_BACKEND=opencl11 SCRAPGPU_TORCH_DEVICE=0 SCRAPGPU_TORCH_ALLOW_CPU_FALLBACK=1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 THERMAL_WAIT_MAX=120 GGML_CL11_PLATFORMS=NVIDIA bash /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/src/adapters/ggml/tools/kepler-sweep/gpu_exec.sh 'GT 710' /home/eightman/bench/conv-venv/bin/python -u /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/src/adapters/pytorch/tests/test_attention.py",
+    "started_at_jst": "2026-10-11T08:15:22.343316+09:00"
+  },
+  {
+    "target": "wx2100_rusticl",
+    "test": "ops",
+    "status": "PASS",
+    "exit_code": 0,
+    "elapsed_seconds_including_lock_wait": 11.028,
+    "log": "wx2100_rusticl_ops.log",
+    "remote_command": "flock -w 300 /home/eightman/bench/gpu-bench.lock timeout -k 10 180 env SCRAPGPU_TORCH_BACKEND=opencl11 SCRAPGPU_TORCH_DEVICE=0 SCRAPGPU_TORCH_ALLOW_CPU_FALLBACK=1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 THERMAL_WAIT_MAX=120 GGML_CL11_PLATFORMS=rusticl bash /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/src/adapters/ggml/tools/kepler-sweep/gpu_exec.sh 'WX 2100 rusticl' /home/eightman/bench/conv-venv/bin/python -u /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/src/adapters/pytorch/tests/test_ops.py",
+    "started_at_jst": "2026-10-11T08:15:32.362287+09:00"
+  },
+  {
+    "target": "wx2100_rusticl",
+    "test": "attention",
+    "status": "PASS",
+    "exit_code": 0,
+    "elapsed_seconds_including_lock_wait": 9.645,
+    "log": "wx2100_rusticl_attention.log",
+    "remote_command": "flock -w 300 /home/eightman/bench/gpu-bench.lock timeout -k 10 180 env SCRAPGPU_TORCH_BACKEND=opencl11 SCRAPGPU_TORCH_DEVICE=0 SCRAPGPU_TORCH_ALLOW_CPU_FALLBACK=1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 THERMAL_WAIT_MAX=120 GGML_CL11_PLATFORMS=rusticl bash /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/src/adapters/ggml/tools/kepler-sweep/gpu_exec.sh 'WX 2100 rusticl' /home/eightman/bench/conv-venv/bin/python -u /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/src/adapters/pytorch/tests/test_attention.py",
+    "started_at_jst": "2026-10-11T08:15:43.390695+09:00"
+  },
+  {
+    "target": "rx6400_rusticl",
+    "test": "ops",
+    "status": "PASS",
+    "exit_code": 0,
+    "elapsed_seconds_including_lock_wait": 11.251,
+    "log": "rx6400_rusticl_ops.log",
+    "remote_command": "flock -w 300 /home/eightman/bench/gpu-bench.lock timeout -k 10 180 env SCRAPGPU_TORCH_BACKEND=opencl11 SCRAPGPU_TORCH_DEVICE=0 SCRAPGPU_TORCH_ALLOW_CPU_FALLBACK=1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 THERMAL_WAIT_MAX=120 GGML_CL11_PLATFORMS=rusticl bash /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/src/adapters/ggml/tools/kepler-sweep/gpu_exec.sh 'RX 6400 rusticl' /home/eightman/bench/conv-venv/bin/python -u /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/src/adapters/pytorch/tests/test_ops.py",
+    "started_at_jst": "2026-10-11T08:15:53.036725+09:00"
+  },
+  {
+    "target": "rx6400_rusticl",
+    "test": "attention",
+    "status": "PASS",
+    "exit_code": 0,
+    "elapsed_seconds_including_lock_wait": 12.032,
+    "log": "rx6400_rusticl_attention.log",
+    "remote_command": "flock -w 300 /home/eightman/bench/gpu-bench.lock timeout -k 10 180 env SCRAPGPU_TORCH_BACKEND=opencl11 SCRAPGPU_TORCH_DEVICE=0 SCRAPGPU_TORCH_ALLOW_CPU_FALLBACK=1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 THERMAL_WAIT_MAX=120 GGML_CL11_PLATFORMS=rusticl bash /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/src/adapters/ggml/tools/kepler-sweep/gpu_exec.sh 'RX 6400 rusticl' /home/eightman/bench/conv-venv/bin/python -u /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/src/adapters/pytorch/tests/test_attention.py",
+    "started_at_jst": "2026-10-11T08:16:04.289822+09:00"
+  }
+]

@@ -406,6 +406,17 @@ bool cl11_device_selected(const std::string & name) {
     return cl11_env_list_selected("GGML_CL11_DEVICES", "SCRAPGPU_OPENCL11_DEVICES", name);
 }
 
+const char * cl11_device_rejection_reason(const cl11_device_info & info) {
+    // This exact combination hangs even on the second trivial kernel launch
+    // on TB250 (docs/HARDWARE.md). Reject before creating a context; rusticl
+    // and Vulkan remain available. Do not generalize to unmeasured GPUs.
+    if (info.platform_name.find("Clover") != std::string::npos &&
+        (info.name.find("RX 6400") != std::string::npos || info.name.find("navi24") != std::string::npos)) {
+        return "RX 6400 / Mesa Clover is disabled after reproduced GPU hangs; use rusticl or Vulkan";
+    }
+    return nullptr;
+}
+
 // GGML_CL11_PLATFORMS (alias SCRAPGPU_OPENCL11_PLATFORMS): comma separated substrings of the OpenCL platform names to use, e.g.
 // "NVIDIA,rusticl". A Radeon is visible on Mesa Clover and rusticl at the same time; Clover hangs the RX 6400 (docs/HARDWARE.md).
 bool cl11_platform_selected(const std::string & name) {
@@ -498,6 +509,10 @@ bool cl11_probe_device_infos(void (*emit)(const cl11_device_info & info, bool st
                 continue;
             }
 
+            if (const char * reason = cl11_device_rejection_reason(info)) {
+                fprintf(stderr, "%s: skipping '%s': %s\n", __func__, info.name.c_str(), reason);
+                continue;
+            }
             emit(info, cl11_tuning_for(info).strict_alloc);
         }
     }

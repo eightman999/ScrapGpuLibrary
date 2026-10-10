@@ -6,6 +6,9 @@
 #include "scrapgpu/op.h"
 #include "scrapgpu/backend.h"
 #include "scrapgpu/remote.h"
+#include "scrapgpu/cpu.h"
+#include "scrapgpu/attention.h"
+#include "scrapgpu/compat.h"
 
 int main(void) {
     return scrapgpu_get_abi_version() == 0u ? 1 : 0;

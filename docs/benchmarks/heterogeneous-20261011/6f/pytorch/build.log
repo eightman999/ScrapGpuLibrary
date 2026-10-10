@@ -1,0 +1,47 @@
+# 2026-10-11T08:24:19.421519+09:00
+# cmake -S /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/src -B /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/build-pytorch -DCMAKE_BUILD_TYPE=Release -DSCRAPGPU_BUILD_CORE=ON -DSCRAPGPU_BUILD_OPENCL11=OFF -DSCRAPGPU_BUILD_PYTORCH=ON -DSCRAPGPU_BUILD_TESTS=OFF -DSCRAPGPU_BUILD_EXAMPLES=OFF -DPython3_EXECUTABLE=/home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/torch-venv/bin/python && timeout -k 10 600 cmake --build /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/build-pytorch --target _C -j 2
+-- The C compiler identification is GNU 15.2.0
+-- The CXX compiler identification is GNU 15.2.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/cc - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/c++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Found Python3: /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/torch-venv/bin/python (found version "3.14.4") found components: Interpreter
+/home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/torch-venv/lib/python3.14/site-packages/torch/_subclasses/functional_tensor.py:368: UserWarning: Failed to initialize NumPy: No module named 'numpy' (Triggered internally at /__w/pytorch/pytorch/torch/csrc/utils/tensor_numpy.cpp:84.)
+  cpu = _conversion_method_template(device=torch.device("cpu"))
+CMake Warning at /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/torch-venv/lib/python3.14/site-packages/torch/share/cmake/Torch/TorchConfig.cmake:22 (message):
+  library kineto not found.
+Call Stack (most recent call first):
+  /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/torch-venv/lib/python3.14/site-packages/torch/share/cmake/Torch/TorchConfig.cmake:119 (append_torchlib_if_found)
+  adapters/pytorch/CMakeLists.txt:14 (find_package)
+
+
+-- Found Torch: /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/torch-venv/lib/python3.14/site-packages/torch/lib/libtorch.so
+-- Configuring done (2.6s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/build-pytorch
+[  6%] Building CXX object CMakeFiles/scrapgpu_tensor.dir/src/tensor/tensor.cpp.o
+[ 12%] Linking CXX static library libscrapgpu_tensor.a
+[ 12%] Built target scrapgpu_tensor
+[ 18%] Building CXX object CMakeFiles/scrapgpu_core.dir/src/core/op.cpp.o
+[ 25%] Building CXX object CMakeFiles/scrapgpu_core.dir/src/core/compat.cpp.o
+[ 31%] Building CXX object CMakeFiles/scrapgpu_core.dir/src/core/attention.cpp.o
+[ 37%] Building CXX object CMakeFiles/scrapgpu_core.dir/src/core/ref/f16.cpp.o
+[ 43%] Building CXX object CMakeFiles/scrapgpu_core.dir/src/core/ref/ops.cpp.o
+[ 50%] Building CXX object CMakeFiles/scrapgpu_core.dir/src/core/ref/quant.cpp.o
+[ 56%] Building CXX object CMakeFiles/scrapgpu_core.dir/src/core/registry.cpp.o
+[ 62%] Building CXX object CMakeFiles/scrapgpu_core.dir/src/core/status.cpp.o
+[ 68%] Building CXX object CMakeFiles/scrapgpu_core.dir/src/core/tensor.cpp.o
+[ 75%] Building CXX object CMakeFiles/scrapgpu_core.dir/src/core/transport.cpp.o
+[ 81%] Building CXX object CMakeFiles/scrapgpu_core.dir/src/backends/cpu/api.cpp.o
+[ 87%] Linking CXX static library libscrapgpu_core.a
+[ 87%] Built target scrapgpu_core
+[ 93%] Building CXX object adapters/pytorch/CMakeFiles/_C.dir/src/torch_api.cpp.o
+[100%] Linking CXX shared library /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/src/adapters/pytorch/scrapgpu_torch/_C.so
+[100%] Built target _C

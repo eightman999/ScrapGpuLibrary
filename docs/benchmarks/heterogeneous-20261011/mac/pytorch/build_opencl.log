@@ -1,0 +1,49 @@
+# 2026-10-11T08:25:37.326660+09:00
+# cmake --build build-pytorch-opencl --target _C -j 4
+# environment overrides: {}
+/private/tmp/scrapgpu-pytorch-venv/lib/python3.14/site-packages/torch/_subclasses/functional_tensor.py:368: UserWarning: Failed to initialize NumPy: No module named 'numpy' (Triggered internally at /Users/runner/work/pytorch/pytorch/torch/csrc/utils/tensor_numpy.cpp:84.)
+  cpu = _conversion_method_template(device=torch.device("cpu"))
+CMake Warning at /private/tmp/scrapgpu-pytorch-venv/lib/python3.14/site-packages/torch/share/cmake/Torch/TorchConfig.cmake:22 (message):
+  library kineto not found.
+Call Stack (most recent call first):
+  /private/tmp/scrapgpu-pytorch-venv/lib/python3.14/site-packages/torch/share/cmake/Torch/TorchConfig.cmake:119 (append_torchlib_if_found)
+  adapters/pytorch/CMakeLists.txt:14 (find_package)
+
+
+-- Configuring done (0.9s)
+-- Generating done (0.1s)
+-- Build files have been written to: /Users/eightman/dev/tools/ScrapGpuLibrary-heterogeneous/build-pytorch-opencl
+[  3%] Building CXX object CMakeFiles/scrapgpu_tensor.dir/src/tensor/tensor.cpp.o
+[  6%] Linking CXX static library libscrapgpu_tensor.a
+[  6%] Built target scrapgpu_tensor
+[ 10%] Building CXX object CMakeFiles/scrapgpu_core.dir/src/core/op.cpp.o
+[ 13%] Building CXX object CMakeFiles/scrapgpu_core.dir/src/core/compat.cpp.o
+[ 17%] Building CXX object CMakeFiles/scrapgpu_core.dir/src/core/attention.cpp.o
+[ 20%] Building CXX object CMakeFiles/scrapgpu_opencl11.dir/src/backends/opencl11/buffer.cpp.o
+[ 24%] Building CXX object CMakeFiles/scrapgpu_opencl11.dir/src/backends/opencl11/context.cpp.o
+[ 27%] Building CXX object CMakeFiles/scrapgpu_opencl11.dir/src/backends/opencl11/device.cpp.o
+[ 31%] Building CXX object CMakeFiles/scrapgpu_opencl11.dir/src/backends/opencl11/device_state.cpp.o
+[ 34%] Building CXX object CMakeFiles/scrapgpu_core.dir/src/core/ref/f16.cpp.o
+[ 37%] Building CXX object CMakeFiles/scrapgpu_core.dir/src/core/ref/ops.cpp.o
+[ 41%] Building CXX object CMakeFiles/scrapgpu_opencl11.dir/src/backends/opencl11/kernels.cpp.o
+[ 44%] Building CXX object CMakeFiles/scrapgpu_core.dir/src/core/ref/quant.cpp.o
+[ 48%] Building CXX object CMakeFiles/scrapgpu_opencl11.dir/src/backends/opencl11/ops.cpp.o
+[ 51%] Building CXX object CMakeFiles/scrapgpu_opencl11.dir/src/backends/opencl11/ops_matmul.cpp.o
+[ 55%] Building CXX object CMakeFiles/scrapgpu_opencl11.dir/src/backends/opencl11/ops_moe.cpp.o
+[ 58%] Building CXX object CMakeFiles/scrapgpu_core.dir/src/core/registry.cpp.o
+[ 62%] Building CXX object CMakeFiles/scrapgpu_opencl11.dir/src/backends/opencl11/ops_support.cpp.o
+[ 65%] Building CXX object CMakeFiles/scrapgpu_core.dir/src/core/status.cpp.o
+[ 68%] Building CXX object CMakeFiles/scrapgpu_opencl11.dir/src/backends/opencl11/r32.cpp.o
+[ 72%] Building CXX object CMakeFiles/scrapgpu_core.dir/src/core/tensor.cpp.o
+[ 75%] Building CXX object CMakeFiles/scrapgpu_core.dir/src/core/transport.cpp.o
+[ 79%] Building CXX object CMakeFiles/scrapgpu_core.dir/src/backends/cpu/api.cpp.o
+[ 82%] Linking CXX static library libscrapgpu_opencl11.a
+[ 82%] Built target scrapgpu_opencl11
+[ 86%] Linking CXX static library libscrapgpu_core.a
+[ 86%] Built target scrapgpu_core
+[ 89%] Building CXX object CMakeFiles/scrapgpu_opencl11_api.dir/src/backends/opencl11/api.cpp.o
+[ 93%] Linking CXX static library libscrapgpu_opencl11_api.a
+[ 93%] Built target scrapgpu_opencl11_api
+[ 96%] Building CXX object adapters/pytorch/CMakeFiles/_C.dir/src/torch_api.cpp.o
+[100%] Linking CXX shared library /Users/eightman/dev/tools/ScrapGpuLibrary-heterogeneous/adapters/pytorch/scrapgpu_torch/_C.so
+[100%] Built target _C

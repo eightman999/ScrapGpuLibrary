@@ -5,6 +5,8 @@ endif()
 file(GLOB_RECURSE SCRAPGPU_PUBLIC_HEADERS
     "${ROOT_DIR}/include/scrapgpu/*.h")
 file(GLOB_RECURSE SCRAPGPU_CORE_SOURCES
+    "${ROOT_DIR}/src/backends/cpu/*.h"
+    "${ROOT_DIR}/src/backends/cpu/*.cpp"
     "${ROOT_DIR}/src/core/*.h"
     "${ROOT_DIR}/src/core/*.hpp"
     "${ROOT_DIR}/src/core/*.c"
@@ -15,6 +17,8 @@ file(GLOB_RECURSE SCRAPGPU_TENSOR_SOURCES
     "${ROOT_DIR}/src/tensor/*.c"
     "${ROOT_DIR}/src/tensor/*.cpp")
 file(GLOB_RECURSE SCRAPGPU_CORE_TESTS
+    "${ROOT_DIR}/tests/cpu/*.cpp"
+    "${ROOT_DIR}/tests/attention/*.cpp"
     "${ROOT_DIR}/tests/ref/*.h"
     "${ROOT_DIR}/tests/ref/*.hpp"
     "${ROOT_DIR}/tests/ref/*.c"

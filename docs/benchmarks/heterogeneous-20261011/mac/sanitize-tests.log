@@ -1,0 +1,29 @@
+Test project /Users/eightman/dev/tools/ScrapGpuLibrary-heterogeneous/build-sanitize
+      Start  1: scrapgpu_core_contract_tests
+ 1/12 Test  #1: scrapgpu_core_contract_tests .....   Passed    0.47 sec
+      Start  2: scrapgpu_compat_tests
+ 2/12 Test  #2: scrapgpu_compat_tests ............   Passed    0.42 sec
+      Start  3: scrapgpu_cpu_tests
+ 3/12 Test  #3: scrapgpu_cpu_tests ...............   Passed    0.42 sec
+      Start  4: scrapgpu_cpu_boundary_tests
+ 4/12 Test  #4: scrapgpu_cpu_boundary_tests ......   Passed    0.44 sec
+      Start  5: scrapgpu_attention_tests
+ 5/12 Test  #5: scrapgpu_attention_tests .........   Passed    0.40 sec
+      Start  6: scrapgpu_public_headers_c
+ 6/12 Test  #6: scrapgpu_public_headers_c ........   Passed    0.39 sec
+      Start  7: scrapgpu_public_headers_cpp
+ 7/12 Test  #7: scrapgpu_public_headers_cpp ......   Passed    0.40 sec
+      Start  8: scrapgpu_tensor_tests
+ 8/12 Test  #8: scrapgpu_tensor_tests ............   Passed    0.42 sec
+      Start  9: scrapgpu_r32_tests
+ 9/12 Test  #9: scrapgpu_r32_tests ...............   Passed    0.46 sec
+      Start 10: scrapgpu_ref_ops_tests
+10/12 Test #10: scrapgpu_ref_ops_tests ...........   Passed    2.01 sec
+      Start 11: scrapgpu_ref_quant_tests
+11/12 Test #11: scrapgpu_ref_quant_tests .........   Passed    0.42 sec
+      Start 12: scrapgpu_dependency_check
+12/12 Test #12: scrapgpu_dependency_check ........   Passed    0.01 sec
+
+100% tests passed out of 12
+
+Total Test time (real) =   6.26 sec

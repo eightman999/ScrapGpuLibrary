@@ -1,0 +1,15 @@
+{
+  "CMakeLists.txt": "89ca7e8a9ceea95fbe69eb18bf2ca8cfadad56e1350e12bf6729b63ba9fc9f12",
+  "src/core/attention.cpp": "d3514f4a8e1774999dcd207b5b337bdb2dc019fccabd28960e11eb9c6957cb1d",
+  "src/core/compat.cpp": "24dd6dc2adde84e7287770a34d2213d7419bf95eecf8212f37e84c93fa8b3ef6",
+  "src/core/ref/ops.cpp": "39556d9d3d620667133cce5002849e1a256597d0d77d029a55c3e2a1e9f836c0",
+  "src/backends/cpu/api.cpp": "443a0f6ffa84d7c8b0b04482179df5df397eeb84ca145e291cf5504b072170b2",
+  "adapters/pytorch/CMakeLists.txt": "bfe3275fc87fa33cf83dae7ff8eb5d9a51fff606d93fa8e52538dc49907f7e6c",
+  "adapters/pytorch/README.md": "2e634674cd42f1f5cea3424b6eddc8a22259902b64e8b5e9a6a4ddb393edcf0e",
+  "adapters/pytorch/tests/test_backend_config.py": "0aef25635d8d0f5b8b4bbf7eaa01be0d7274baa08d0b833d4712a56bcf4ebf2f",
+  "adapters/pytorch/tests/test_attention.py": "58fe21fcec31c6671720ae601657ce9d4edd283ee70404496e08ffc476de1187",
+  "adapters/pytorch/tests/test_ops.py": "4aee249820178261c1a3aef60990cd428fda28a15df6bc48aa0a29da9ed999ee",
+  "adapters/pytorch/scrapgpu_torch/__init__.py": "3abb64ff351148234cfd96262a720d1f643718931f529dd5adc61c38e45a6663",
+  "adapters/pytorch/examples/mlp.py": "36e2121a24276bd3a2c7069f9c343e7296ddf8fb66a10d042aebc68aad10da21",
+  "adapters/pytorch/src/torch_api.cpp": "168bfcb220137179fac94522295ebb71c0b025ee63e4b870af1f97a9f96a6c34"
+}

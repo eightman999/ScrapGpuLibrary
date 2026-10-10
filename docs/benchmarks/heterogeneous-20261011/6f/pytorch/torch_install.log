@@ -1,0 +1,45 @@
+# 2026-10-11T08:23:26.391131+09:00
+# timeout -k 10 600 /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/torch-venv/bin/python -I -m pip --isolated install --disable-pip-version-check --no-input --retries 0 --cache-dir /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/pip-cache --index-url https://download.pytorch.org/whl/cpu torch==2.14.1 && /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/torch-venv/bin/python -I -c 'import torch,sys,pathlib; print("torch",torch.__version__, "python",sys.version); print("torch module",torch.__file__); assert pathlib.Path(torch.__file__).resolve().is_relative_to(pathlib.Path(sys.prefix).resolve())'
+Looking in indexes: https://download.pytorch.org/whl/cpu
+Collecting torch==2.14.1
+  Downloading torch-2.14.1%2Bcpu-cp314-cp314-manylinux_2_28_x86_64.whl.metadata (37 kB)
+Collecting filelock (from torch==2.14.1)
+  Downloading filelock-3.32.3-py3-none-any.whl.metadata (2.0 kB)
+Collecting typing-extensions>=4.10.0 (from torch==2.14.1)
+  Downloading typing_extensions-4.16.0-py3-none-any.whl.metadata (3.3 kB)
+Collecting setuptools>=77.0.3 (from torch==2.14.1)
+  Downloading setuptools-78.1.0-py3-none-any.whl.metadata (6.6 kB)
+Collecting sympy>=1.13.3 (from torch==2.14.1)
+  Downloading sympy-1.14.0-py3-none-any.whl.metadata (12 kB)
+Collecting networkx>=2.5.1 (from torch==2.14.1)
+  Downloading networkx-3.6.1-py3-none-any.whl.metadata (6.8 kB)
+Collecting jinja2 (from torch==2.14.1)
+  Downloading jinja2-3.1.6-py3-none-any.whl.metadata (2.9 kB)
+Collecting fsspec>=0.8.5 (from torch==2.14.1)
+  Downloading fsspec-2026.7.0-py3-none-any.whl.metadata (10 kB)
+Collecting mpmath<1.4,>=1.1.0 (from sympy>=1.13.3->torch==2.14.1)
+  Downloading mpmath-1.3.0-py3-none-any.whl.metadata (8.6 kB)
+Collecting MarkupSafe>=2.0 (from jinja2->torch==2.14.1)
+  Downloading markupsafe-3.0.3-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (2.7 kB)
+Downloading torch-2.14.1%2Bcpu-cp314-cp314-manylinux_2_28_x86_64.whl (196.3 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 196.3/196.3 MB 11.2 MB/s  0:00:17
+Downloading fsspec-2026.7.0-py3-none-any.whl (206 kB)
+Downloading networkx-3.6.1-py3-none-any.whl (2.1 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.1/2.1 MB 10.7 MB/s  0:00:00
+Downloading setuptools-78.1.0-py3-none-any.whl (1.3 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.3/1.3 MB 10.5 MB/s  0:00:00
+Downloading sympy-1.14.0-py3-none-any.whl (6.3 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 6.3/6.3 MB 11.1 MB/s  0:00:00
+Downloading mpmath-1.3.0-py3-none-any.whl (536 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 536.2/536.2 kB 8.4 MB/s  0:00:00
+Downloading typing_extensions-4.16.0-py3-none-any.whl (45 kB)
+Downloading filelock-3.32.3-py3-none-any.whl (98 kB)
+Downloading jinja2-3.1.6-py3-none-any.whl (134 kB)
+Downloading markupsafe-3.0.3-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (23 kB)
+Installing collected packages: mpmath, typing-extensions, sympy, setuptools, networkx, MarkupSafe, fsspec, filelock, jinja2, torch
+
+Successfully installed MarkupSafe-3.0.3 filelock-3.32.3 fsspec-2026.7.0 jinja2-3.1.6 mpmath-1.3.0 networkx-3.6.1 setuptools-78.1.0 sympy-1.14.0 torch-2.14.1+cpu typing-extensions-4.16.0
+/home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/torch-venv/lib/python3.14/site-packages/torch/_subclasses/functional_tensor.py:368: UserWarning: Failed to initialize NumPy: No module named 'numpy' (Triggered internally at /__w/pytorch/pytorch/torch/csrc/utils/tensor_numpy.cpp:84.)
+  cpu = _conversion_method_template(device=torch.device("cpu"))
+torch 2.14.1+cpu python 3.14.4 (main, Aug 20 2026, 10:41:58) [GCC 15.2.0]
+torch module /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/torch-venv/lib/python3.14/site-packages/torch/__init__.py

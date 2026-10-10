@@ -1,0 +1,74 @@
+[
+  {
+    "stage": "install",
+    "status": "FAIL",
+    "exit_code": 1,
+    "elapsed_seconds": 0.726,
+    "log": "/private/tmp/scrapgpu-heterogeneous-agents/6f-torch/install.log",
+    "remote_command": "python3 -m venv /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/torch-venv && timeout -k 10 600 /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/torch-venv/bin/python -m pip --isolated install --disable-pip-version-check --no-input --retries 0 --cache-dir /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/pip-cache --index-url https://download.pytorch.org/whl/cpu torch==2.14.1 && /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/torch-venv/bin/python -c 'import torch,sys; print(\"torch\", torch.__version__, \"python\", sys.version)'",
+    "started_at_jst": "2026-10-11T08:21:27.741482+09:00"
+  },
+  {
+    "stage": "bootstrap",
+    "status": "PASS",
+    "exit_code": 0,
+    "elapsed_seconds": 4.948,
+    "log": "/private/tmp/scrapgpu-heterogeneous-agents/6f-torch/bootstrap.log",
+    "remote_command": "/home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/torch-venv/bin/python -I -c 'import pathlib,sys; p=pathlib.Path(sys.prefix).resolve(); print(\"sys.prefix\",p); print(\"sys.base_prefix\",sys.base_prefix); assert sys.prefix != sys.base_prefix; assert p == pathlib.Path(\"/home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/torch-venv\").resolve()' && curl --fail --location --proto =https --tlsv1.2 --retry 0 --max-time 120 https://bootstrap.pypa.io/get-pip.py --output /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/get-pip.py && sha256sum /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/get-pip.py && timeout -k 10 180 /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/torch-venv/bin/python -I /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/get-pip.py --isolated --no-input --disable-pip-version-check --cache-dir /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/pip-cache --index-url https://pypi.org/simple --retries 0 && /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/torch-venv/bin/python -I -c 'import pathlib,pip,sys; print(\"pip\", pip.__version__, pip.__file__); assert pathlib.Path(pip.__file__).resolve().is_relative_to(pathlib.Path(sys.prefix).resolve())'",
+    "started_at_jst": "2026-10-11T08:23:21.442442+09:00"
+  },
+  {
+    "stage": "torch_install",
+    "status": "PASS",
+    "exit_code": 0,
+    "elapsed_seconds": 53.129,
+    "log": "/private/tmp/scrapgpu-heterogeneous-agents/6f-torch/torch_install.log",
+    "remote_command": "timeout -k 10 600 /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/torch-venv/bin/python -I -m pip --isolated install --disable-pip-version-check --no-input --retries 0 --cache-dir /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/pip-cache --index-url https://download.pytorch.org/whl/cpu torch==2.14.1 && /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/torch-venv/bin/python -I -c 'import torch,sys,pathlib; print(\"torch\",torch.__version__, \"python\",sys.version); print(\"torch module\",torch.__file__); assert pathlib.Path(torch.__file__).resolve().is_relative_to(pathlib.Path(sys.prefix).resolve())'",
+    "started_at_jst": "2026-10-11T08:23:26.391131+09:00"
+  },
+  {
+    "stage": "build",
+    "status": "PASS",
+    "exit_code": 0,
+    "elapsed_seconds": 25.713,
+    "log": "/private/tmp/scrapgpu-heterogeneous-agents/6f-torch/build.log",
+    "remote_command": "cmake -S /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/src -B /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/build-pytorch -DCMAKE_BUILD_TYPE=Release -DSCRAPGPU_BUILD_CORE=ON -DSCRAPGPU_BUILD_OPENCL11=OFF -DSCRAPGPU_BUILD_PYTORCH=ON -DSCRAPGPU_BUILD_TESTS=OFF -DSCRAPGPU_BUILD_EXAMPLES=OFF -DPython3_EXECUTABLE=/home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/torch-venv/bin/python && timeout -k 10 600 cmake --build /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/build-pytorch --target _C -j 2",
+    "started_at_jst": "2026-10-11T08:24:19.421519+09:00"
+  },
+  {
+    "stage": "test_ops",
+    "status": "PASS",
+    "exit_code": 0,
+    "elapsed_seconds": 3.034,
+    "log": "/private/tmp/scrapgpu-heterogeneous-agents/6f-torch/test_ops.log",
+    "remote_command": "timeout -k 10 180 env PYTHONDONTWRITEBYTECODE=1 SCRAPGPU_TORCH_BACKEND=cpu SCRAPGPU_TORCH_DEVICE=0 SCRAPGPU_TORCH_ALLOW_CPU_FALLBACK=0 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/torch-venv/bin/python -u /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/src/adapters/pytorch/tests/test_ops.py",
+    "started_at_jst": "2026-10-11T08:24:45.137771+09:00"
+  },
+  {
+    "stage": "test_attention",
+    "status": "PASS",
+    "exit_code": 0,
+    "elapsed_seconds": 3.034,
+    "log": "/private/tmp/scrapgpu-heterogeneous-agents/6f-torch/test_attention.log",
+    "remote_command": "timeout -k 10 180 env PYTHONDONTWRITEBYTECODE=1 SCRAPGPU_TORCH_BACKEND=cpu SCRAPGPU_TORCH_DEVICE=0 SCRAPGPU_TORCH_ALLOW_CPU_FALLBACK=0 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/torch-venv/bin/python -u /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/src/adapters/pytorch/tests/test_attention.py",
+    "started_at_jst": "2026-10-11T08:24:48.173244+09:00"
+  },
+  {
+    "stage": "test_backend_config",
+    "status": "PASS",
+    "exit_code": 0,
+    "elapsed_seconds": 14.749,
+    "log": "/private/tmp/scrapgpu-heterogeneous-agents/6f-torch/test_backend_config.log",
+    "remote_command": "timeout -k 10 180 env PYTHONDONTWRITEBYTECODE=1 SCRAPGPU_TORCH_BACKEND=cpu SCRAPGPU_TORCH_DEVICE=0 SCRAPGPU_TORCH_ALLOW_CPU_FALLBACK=0 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/torch-venv/bin/python -u /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/src/adapters/pytorch/tests/test_backend_config.py",
+    "started_at_jst": "2026-10-11T08:24:51.208437+09:00"
+  },
+  {
+    "stage": "mlp",
+    "status": "PASS",
+    "exit_code": 0,
+    "elapsed_seconds": 2.338,
+    "log": "/private/tmp/scrapgpu-heterogeneous-agents/6f-torch/mlp.log",
+    "remote_command": "timeout -k 10 180 env PYTHONDONTWRITEBYTECODE=1 SCRAPGPU_TORCH_BACKEND=cpu SCRAPGPU_TORCH_DEVICE=0 SCRAPGPU_TORCH_ALLOW_CPU_FALLBACK=0 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/torch-venv/bin/python -u /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/src/adapters/pytorch/examples/mlp.py",
+    "started_at_jst": "2026-10-11T08:25:05.959158+09:00"
+  }
+]

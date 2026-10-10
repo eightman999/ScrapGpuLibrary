@@ -2,6 +2,8 @@
 
 CL11 は llama.cpp **b11384（commit `0faee50`、ggml 0.25.3、backend API 3）** に対して書かれています。ggml の backend API は安定していないため、別のバージョンではコンパイルエラーになるか、プラグインが読み込まれないことがあります（ツリー外ビルドは configure 時にバージョンを確認し、違えば警告を出します）。
 
+2026-10-11 には llama.cpp `23b0202a189c44a54625aadcb37a946dd1d6278d`（ggml 0.26.0 / backend API 3）のツリー外プラグインも TB250 の5 GPUで演算・生成を検証しました。旧CPU向けの `GGML_BMI2=OFF`、`llama-completion` の使用、CPU/GPU比較時の `-fa off` は [現行フレームワークの手順](../../../docs/HETEROGENEOUS_RUNTIME.md) を参照してください。以下の b11384 用コマンドと区別し、別のHEADは個別に検証します。
+
 組み込み方は 2 通りです。
 
 | | ツリー外プラグイン | ツリー内パッチ |

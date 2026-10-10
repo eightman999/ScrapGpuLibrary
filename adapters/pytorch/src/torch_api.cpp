@@ -1,7 +1,12 @@
-// Stage A PyTorch adapter: CPU float tensors in/out; each op copies through the host.
+// PyTorch adapter: inference-only CPU float tensors in/out, explicit backend selection.
 #include "scrapgpu/buffer.h"
 #include "scrapgpu/device.h"
+#include "scrapgpu/cpu.h"
+#include "scrapgpu/compat.h"
+#include "scrapgpu/attention.h"
+#ifdef SCRAPGPU_TORCH_HAS_OPENCL11
 #include "scrapgpu/opencl11.h"
+#endif
 #include "scrapgpu/op.h"
 #include "scrapgpu/reference.h"
 #include "scrapgpu/status.h"
@@ -13,6 +18,9 @@
 #include <torch/library.h>
 
 #include <cmath>
+#include <cstdlib>
+#include <limits>
+#include <optional>
 #include <cstring>
 #include <mutex>
 #include <stdexcept>
@@ -23,6 +31,12 @@ namespace {
 
 std::mutex g_mu;
 bool g_ready = false;
+bool g_configured = false;
+bool g_registered = false;
+std::string g_backend;
+size_t g_device_index = 0;
+std::vector<scrapgpu_device_t *> g_devices;
+scrapgpu_compat_options g_compat{};
 scrapgpu_device_t * g_dev = nullptr;
 scrapgpu_stream_t * g_stream = nullptr;
 
@@ -47,16 +61,71 @@ struct GpuBuf {
     scrapgpu_buffer_t ** put() { return &b; }
 };
 
-void ensure_gpu() {
-    std::lock_guard<std::mutex> lock(g_mu);
-    if (g_ready) {
-        return;
+uint64_t env_uint(const char * name, uint64_t default_value) {
+    const char * value = std::getenv(name);
+    if (!value) return default_value;
+    TORCH_CHECK(*value, name, " must be a nonnegative integer");
+    uint64_t parsed = 0;
+    for (const char * p = value; *p; ++p) {
+        TORCH_CHECK(*p >= '0' && *p <= '9', name, " must be a nonnegative integer");
+        const unsigned digit = static_cast<unsigned>(*p - '0');
+        TORCH_CHECK(parsed <= (std::numeric_limits<uint64_t>::max() - digit) / 10,
+                    name, " is too large");
+        parsed = parsed * 10 + digit;
     }
-    check_status(scrapgpu_opencl11_register(), "scrapgpu_opencl11_register");
-    if (scrapgpu_get_device_count() == 0) {
-        throw std::runtime_error("no ScrapGpu OpenCL device");
+    return parsed;
+}
+
+// Caller holds g_mu. Configuration is captured before the first registration, including
+// device discovery. Later environment edits cannot move already-uploaded weights.
+void register_backend() {
+    if (!g_configured) {
+        const char * backend = std::getenv("SCRAPGPU_TORCH_BACKEND");
+        g_backend = backend ? backend : "opencl11";
+        TORCH_CHECK(g_backend == "cpu" || g_backend == "opencl11",
+                    "SCRAPGPU_TORCH_BACKEND must be cpu or opencl11");
+        const uint64_t index = env_uint("SCRAPGPU_TORCH_DEVICE", 0);
+        TORCH_CHECK(index <= std::numeric_limits<size_t>::max(), "device index is too large");
+        g_device_index = static_cast<size_t>(index);
+        const uint64_t fallback = env_uint("SCRAPGPU_TORCH_ALLOW_CPU_FALLBACK", 0);
+        TORCH_CHECK(fallback <= 1, "SCRAPGPU_TORCH_ALLOW_CPU_FALLBACK must be 0 or 1");
+        g_compat.struct_size = sizeof(g_compat);
+        g_compat.allow_cpu_fallback = static_cast<int>(fallback);
+        g_compat.max_staging_bytes = env_uint("SCRAPGPU_TORCH_MAX_STAGING_BYTES", 256ull * 1024 * 1024);
+        g_configured = true;
     }
-    check_status(scrapgpu_get_device(0, &g_dev), "scrapgpu_get_device");
+    if (!g_registered) {
+        if (g_backend == "cpu") {
+            check_status(scrapgpu_cpu_register(), "scrapgpu_cpu_register");
+        } else {
+#ifdef SCRAPGPU_TORCH_HAS_OPENCL11
+            check_status(scrapgpu_opencl11_register(), "scrapgpu_opencl11_register");
+#else
+            TORCH_CHECK(false, "this extension was built without OpenCL; set SCRAPGPU_TORCH_BACKEND=cpu");
+#endif
+        }
+        g_registered = true;
+    }
+    if (g_devices.empty()) {
+        std::vector<scrapgpu_device_t *> devices;
+        for (size_t i = 0; i < scrapgpu_get_device_count(); ++i) {
+            scrapgpu_device_t * device = nullptr;
+            check_status(scrapgpu_get_device(i, &device), "scrapgpu_get_device");
+            scrapgpu_device_info info{};
+            check_status(scrapgpu_device_info_init(&info, sizeof(info)), "device_info_init");
+            check_status(scrapgpu_device_get_info(device, &info), "device_get_info");
+            if (info.backend_name && g_backend == info.backend_name) devices.push_back(device);
+        }
+        g_devices = std::move(devices);
+    }
+}
+
+void ensure_backend() {
+    if (g_ready) return;
+    register_backend();
+    TORCH_CHECK(g_device_index < g_devices.size(), "no ScrapGpu ", g_backend,
+                " device at index ", g_device_index, " (available: ", g_devices.size(), ")");
+    g_dev = g_devices[g_device_index];
     check_status(scrapgpu_stream_create(g_dev, &g_stream), "scrapgpu_stream_create");
     g_ready = true;
 }
@@ -91,7 +160,6 @@ size_t tensor_bytes(const scrapgpu_tensor_desc & t) {
 }
 
 void run_op(scrapgpu_op op, const std::vector<scrapgpu_tensor_desc> & ins, std::vector<scrapgpu_tensor_desc> & outs, const void * params, size_t params_size) {
-    ensure_gpu();
     std::vector<scrapgpu_tensor_desc> in_copy = ins;
     scrapgpu_op_desc desc{};
     desc.struct_size = sizeof(desc);
@@ -103,9 +171,8 @@ void run_op(scrapgpu_op op, const std::vector<scrapgpu_tensor_desc> & ins, std::
     desc.params = params;
     desc.params_size = params_size;
     check_status(scrapgpu_op_desc_validate(&desc), "scrapgpu_op_desc_validate");
-    const char * reason = nullptr;
-    check_status(scrapgpu_op_supported(g_dev, &desc, &reason), reason ? reason : "scrapgpu_op_supported");
-    check_status(scrapgpu_op_execute(g_stream, &desc), "scrapgpu_op_execute");
+    check_status(scrapgpu_op_execute_compatible(g_dev, g_stream, &desc, &g_compat, nullptr),
+                 "scrapgpu_op_execute_compatible");
     check_status(scrapgpu_stream_sync(g_stream), "scrapgpu_stream_sync");
 }
 
@@ -113,26 +180,8 @@ at::Tensor require_cpu_f32(const at::Tensor & t, const char * name) {
     TORCH_CHECK(t.device().is_cpu(), name, " must be a CPU tensor");
     TORCH_CHECK(t.scalar_type() == at::kFloat, name, " must be float32");
     TORCH_CHECK(t.is_contiguous(), name, " must be contiguous");
+    TORCH_CHECK(!t.requires_grad(), name, " requires gradients; ScrapGpu custom ops support inference only");
     return t;
-}
-
-uint16_t f32_to_f16(float f) {
-    uint32_t x;
-    std::memcpy(&x, &f, 4);
-    const uint32_t sign = (x >> 16) & 0x8000u;
-    const int32_t e = static_cast<int32_t>((x >> 23) & 0xff) - 127 + 15;
-    const uint32_t m = x & 0x7fffffu;
-    if (e <= 0) {
-        return static_cast<uint16_t>(sign);
-    }
-    if (e >= 31) {
-        return static_cast<uint16_t>(sign | 0x7c00u);
-    }
-    uint32_t h = sign | (static_cast<uint32_t>(e) << 10) | (m >> 13);
-    if ((m & 0x1fffu) > 0x1000u || ((m & 0x3fffu) == 0x3000u)) {
-        ++h;
-    }
-    return static_cast<uint16_t>(h);
 }
 
 scrapgpu_dtype parse_quant(const std::string & q) {
@@ -141,6 +190,9 @@ scrapgpu_dtype parse_quant(const std::string & q) {
     }
     if (q == "f16") {
         return SCRAPGPU_DTYPE_F16;
+    }
+    if (q == "bf16") {
+        return SCRAPGPU_DTYPE_BF16;
     }
     if (q == "q4_0") {
         return SCRAPGPU_DTYPE_Q4_0;
@@ -172,39 +224,39 @@ public:
         out_features_ = m;
         in_features_ = k;
         dtype_ = parse_quant(quant_type_);
-        layout_ = is_quantized(dtype_) ? SCRAPGPU_LAYOUT_R32 : SCRAPGPU_LAYOUT_NATURAL;
+        TORCH_CHECK(k % scrapgpu_dtype_block_size(dtype_) == 0,
+                    "in_features must be a multiple of the quantization block size");
+        std::lock_guard<std::mutex> lock(g_mu);
+        ensure_backend();
+        layout_ = is_quantized(dtype_) && g_backend == "opencl11" ? SCRAPGPU_LAYOUT_R32 : SCRAPGPU_LAYOUT_NATURAL;
 
         // ScrapGpu MUL_MAT: src0 is [K, M] (ne0=K, ne1=M); PyTorch Linear weight is [M, K].
-        std::vector<float> km(static_cast<size_t>(k * m));
-        for (int64_t mi = 0; mi < m; ++mi) {
-            for (int64_t ki = 0; ki < k; ++ki) {
-                km[static_cast<size_t>(ki + mi * k)] = w[mi][ki].item<float>();
-            }
-        }
+        const float * km = w.data_ptr<float>();
 
         std::vector<uint8_t> host;
         if (dtype_ == SCRAPGPU_DTYPE_F32) {
             host.resize(static_cast<size_t>(k * m) * sizeof(float));
-            std::memcpy(host.data(), km.data(), host.size());
-        } else if (dtype_ == SCRAPGPU_DTYPE_F16) {
-            host.resize(static_cast<size_t>(k * m) * 2);
-            for (int64_t i = 0; i < k * m; ++i) {
-                const uint16_t h = f32_to_f16(km[static_cast<size_t>(i)]);
-                std::memcpy(host.data() + static_cast<size_t>(i) * 2, &h, 2);
-            }
+            std::memcpy(host.data(), km, host.size());
+        } else if (dtype_ == SCRAPGPU_DTYPE_F16 || dtype_ == SCRAPGPU_DTYPE_BF16) {
+            const at::Tensor packed = w.to(dtype_ == SCRAPGPU_DTYPE_F16 ? at::kHalf : at::kBFloat16);
+            host.resize(static_cast<size_t>(w.numel()) * 2);
+            std::memcpy(host.data(), packed.const_data_ptr(), host.size());
         } else {
             host.resize(tensor_bytes(make_desc(dtype_, SCRAPGPU_LAYOUT_NATURAL, k, m, 1, 1, nullptr)));
-            check_status(scrapgpu_ref_quantize(dtype_, km.data(), host.data(), k * m), "scrapgpu_ref_quantize");
+            check_status(scrapgpu_ref_quantize(dtype_, km, host.data(), k * m), "scrapgpu_ref_quantize");
         }
 
-        ensure_gpu();
-        check_status(scrapgpu_buffer_alloc(g_dev, host.size(), &buf_), "scrapgpu_buffer_alloc");
-        desc_ = make_desc(dtype_, layout_, k, m, 1, 1, buf_);
+        GpuBuf pending;
+        check_status(scrapgpu_buffer_alloc(g_dev, host.size(), pending.put()), "scrapgpu_buffer_alloc");
+        desc_ = make_desc(dtype_, layout_, k, m, 1, 1, pending.b);
         check_status(scrapgpu_tensor_upload(g_stream, &desc_, host.data(), host.size()), "weight upload");
         check_status(scrapgpu_stream_sync(g_stream), "stream_sync after weight upload");
+        buf_ = pending.b;
+        pending.b = nullptr;
     }
 
     ~WeightImpl() override {
+        std::lock_guard<std::mutex> lock(g_mu);
         if (buf_) {
             scrapgpu_buffer_free(buf_);
             buf_ = nullptr;
@@ -235,6 +287,8 @@ private:
 };
 
 at::Tensor linear_cpu(const at::Tensor & x, const c10::intrusive_ptr<WeightImpl> & weight) {
+    std::lock_guard<std::mutex> lock(g_mu);
+    ensure_backend();
     at::Tensor xt = require_cpu_f32(x, "x");
     const int64_t k = weight->in_features();
     const int64_t m = weight->out_features();
@@ -280,6 +334,8 @@ at::Tensor linear_cpu(const at::Tensor & x, const c10::intrusive_ptr<WeightImpl>
 }
 
 at::Tensor unary_f32(scrapgpu_unary_kind kind, const at::Tensor & x) {
+    std::lock_guard<std::mutex> lock(g_mu);
+    ensure_backend();
     at::Tensor xt = require_cpu_f32(x, "x");
     TORCH_CHECK(xt.dim() >= 1, "x must have at least 1 dimension");
     // an empty tensor needs no GPU work — and numel()/size(-1) would divide by zero (audit M-3)
@@ -308,6 +364,8 @@ at::Tensor unary_f32(scrapgpu_unary_kind kind, const at::Tensor & x) {
 }
 
 at::Tensor add_cpu(const at::Tensor & a, const at::Tensor & b) {
+    std::lock_guard<std::mutex> lock(g_mu);
+    ensure_backend();
     at::Tensor ta = require_cpu_f32(a, "a");
     at::Tensor tb = require_cpu_f32(b, "b");
     TORCH_CHECK(ta.sizes() == tb.sizes(), "add: shape mismatch");
@@ -337,6 +395,8 @@ at::Tensor add_cpu(const at::Tensor & a, const at::Tensor & b) {
 }
 
 at::Tensor rms_norm_cpu(const at::Tensor & x, const at::Tensor & w, double eps) {
+    std::lock_guard<std::mutex> lock(g_mu);
+    ensure_backend();
     at::Tensor xt = require_cpu_f32(x, "x");
     at::Tensor wt = require_cpu_f32(w, "w");
     TORCH_CHECK(xt.dim() >= 1, "x must have at least 1 dimension");
@@ -385,10 +445,12 @@ at::Tensor rope_cpu(
     double beta_fast,
     double beta_slow,
     int64_t mode) {
+    std::lock_guard<std::mutex> lock(g_mu);
+    ensure_backend();
     at::Tensor xt = require_cpu_f32(x, "x");
     TORCH_CHECK(xt.dim() == 3, "x must be [head_dim, n_heads, n_tokens] (ScrapGpu layout)");
     TORCH_CHECK(pos.device().is_cpu() && pos.scalar_type() == at::kInt, "pos must be CPU int32");
-    TORCH_CHECK(pos.is_contiguous(), "pos must be contiguous");
+    TORCH_CHECK(pos.is_contiguous() && pos.dim() == 1, "pos must be contiguous and 1-D");
     const int64_t hd = xt.size(0);
     const int64_t nh = xt.size(1);
     const int64_t nt = xt.size(2);
@@ -476,25 +538,111 @@ at::Tensor ref_rope_cpu(
     return y;
 }
 
-int64_t device_count() {
-    if (scrapgpu_opencl11_register() != SCRAPGPU_STATUS_OK) {
-        return 0;
+at::Tensor scaled_dot_product_attention_cpu(
+    const at::Tensor & query, const at::Tensor & key, const at::Tensor & value,
+    const std::optional<at::Tensor> & attn_mask, double dropout_p, bool is_causal,
+    std::optional<double> scale, bool enable_gqa, int64_t query_position_offset,
+    int64_t max_workspace_bytes) {
+    at::Tensor q = require_cpu_f32(query, "query");
+    at::Tensor k = require_cpu_f32(key, "key");
+    at::Tensor v = require_cpu_f32(value, "value");
+    TORCH_CHECK(q.dim() == 4 && k.dim() == 4 && v.dim() == 4,
+                "query/key/value must be 4-D [batch, heads, sequence, feature]");
+    TORCH_CHECK(q.numel() > 0 && k.numel() > 0 && v.numel() > 0,
+                "attention dimensions must be nonzero");
+    TORCH_CHECK(dropout_p == 0.0, "ScrapGpu attention is inference-only; dropout_p must be zero");
+    TORCH_CHECK(query_position_offset >= 0, "query_position_offset must be nonnegative");
+    TORCH_CHECK(max_workspace_bytes >= 0, "max_workspace_bytes must be nonnegative");
+    const int64_t batch = q.size(0), heads = q.size(1), length = q.size(2), dim = q.size(3);
+    const int64_t kv_heads = k.size(1), sequence = k.size(2), value_dim = v.size(3);
+    TORCH_CHECK(k.size(0) == batch && v.size(0) == batch, "attention batch dimensions must match");
+    TORCH_CHECK(k.size(3) == dim, "query and key feature dimensions must match");
+    TORCH_CHECK(v.size(1) == kv_heads && v.size(2) == sequence, "key and value heads/sequence must match");
+    TORCH_CHECK(heads % kv_heads == 0 && (enable_gqa || heads == kv_heads),
+                "different query/key head counts require enable_gqa and divisible heads");
+    const double scale_value = scale.value_or(1.0 / std::sqrt(static_cast<double>(dim)));
+    TORCH_CHECK(std::isfinite(scale_value) && std::abs(scale_value) <= std::numeric_limits<float>::max(),
+                "scale must be finite and representable as float32");
+
+    at::Tensor mask;
+    if (attn_mask) {
+        const at::Tensor & source = *attn_mask;
+        TORCH_CHECK(source.device().is_cpu(), "attn_mask must be a CPU tensor");
+        TORCH_CHECK(source.scalar_type() == at::kFloat || source.scalar_type() == at::kBool,
+                    "attn_mask must be float32 or bool");
+        TORCH_CHECK(!source.requires_grad(), "attn_mask requires gradients; ScrapGpu supports inference only");
+        TORCH_CHECK(source.dim() <= 4, "attn_mask must broadcast to [batch, heads, query, key]");
+        std::vector<int64_t> shape(4, 1);
+        for (int64_t i = 0; i < source.dim(); ++i) shape[4 - source.dim() + i] = source.size(i);
+        const int64_t target[4] = {batch, heads, length, sequence};
+        for (size_t i = 0; i < 4; ++i) {
+            TORCH_CHECK(shape[i] == 1 || shape[i] == target[i], "attn_mask shape cannot broadcast to attention scores");
+        }
+        mask = source.reshape(shape);
+        if (source.scalar_type() == at::kBool) {
+            // PyTorch bool masks use true for visible, false for masked-out entries.
+            mask = at::zeros(shape, q.options()).masked_fill(mask.logical_not(), -std::numeric_limits<float>::infinity());
+        }
+        mask = mask.expand({shape[0], shape[1], length, sequence}).contiguous();
     }
-    return static_cast<int64_t>(scrapgpu_get_device_count());
+
+    std::lock_guard<std::mutex> lock(g_mu);
+    ensure_backend();
+    GpuBuf bq, bk, bv, bm, by;
+    auto upload = [](const at::Tensor & tensor, GpuBuf & buffer) {
+        const size_t bytes = static_cast<size_t>(tensor.numel()) * sizeof(float);
+        check_status(scrapgpu_buffer_alloc(g_dev, bytes, buffer.put()), "attention buffer_alloc");
+        scrapgpu_tensor_desc desc = make_desc(SCRAPGPU_DTYPE_F32, SCRAPGPU_LAYOUT_NATURAL,
+            tensor.size(3), tensor.size(2), tensor.size(1), tensor.size(0), buffer.b);
+        check_status(scrapgpu_tensor_upload(g_stream, &desc, tensor.data_ptr<float>(), bytes), "attention upload");
+        return desc;
+    };
+    auto qdesc = upload(q, bq);
+    auto kdesc = upload(k, bk);
+    auto vdesc = upload(v, bv);
+    scrapgpu_tensor_desc mdesc{};
+    if (mask.defined()) mdesc = upload(mask, bm);
+    at::Tensor output = at::empty({batch, heads, length, value_dim}, q.options());
+    const size_t output_bytes = static_cast<size_t>(output.numel()) * sizeof(float);
+    check_status(scrapgpu_buffer_alloc(g_dev, output_bytes, by.put()), "attention output buffer_alloc");
+    auto ydesc = make_desc(SCRAPGPU_DTYPE_F32, SCRAPGPU_LAYOUT_NATURAL,
+                          value_dim, length, heads, batch, by.b);
+    scrapgpu_attention_params params{};
+    params.struct_size = sizeof(params);
+    params.query = &qdesc;
+    params.key = &kdesc;
+    params.value = &vdesc;
+    params.mask = mask.defined() ? &mdesc : nullptr;
+    params.output = &ydesc;
+    params.query_position_offset = static_cast<uint64_t>(query_position_offset);
+    params.max_workspace_bytes = static_cast<uint64_t>(max_workspace_bytes);
+    params.causal = is_causal;
+    params.scale = static_cast<float>(scale_value);
+    check_status(scrapgpu_scaled_dot_product_attention(g_dev, g_stream, &params), "scaled_dot_product_attention");
+    check_status(scrapgpu_stream_sync(g_stream), "attention stream_sync");
+    check_status(scrapgpu_tensor_download(g_stream, &ydesc, output.data_ptr<float>(), output_bytes), "attention download");
+    return output;
+}
+
+int64_t device_count() {
+    std::lock_guard<std::mutex> lock(g_mu);
+    register_backend();
+    return static_cast<int64_t>(g_devices.size());
 }
 
 std::string device_name(int64_t index) {
-    check_status(scrapgpu_opencl11_register(), "register");
-    scrapgpu_device_t * dev = nullptr;
-    check_status(scrapgpu_get_device(static_cast<size_t>(index), &dev), "get_device");
+    std::lock_guard<std::mutex> lock(g_mu);
+    register_backend();
+    TORCH_CHECK(index >= 0 && static_cast<uint64_t>(index) < g_devices.size(), "invalid device index");
     scrapgpu_device_info info{};
     check_status(scrapgpu_device_info_init(&info, sizeof(info)), "device_info_init");
-    check_status(scrapgpu_device_get_info(dev, &info), "device_get_info");
+    check_status(scrapgpu_device_get_info(g_devices[static_cast<size_t>(index)], &info), "device_get_info");
     return info.name ? info.name : "";
 }
 
 void load_library() {
-    ensure_gpu();
+    std::lock_guard<std::mutex> lock(g_mu);
+    ensure_backend();
 }
 
 // Dequantize a PyTorch-shaped [out,in] weight for torch reference tests.
@@ -505,23 +653,16 @@ at::Tensor ref_dequant_linear_weight(at::Tensor weight_f32, std::string quant_ty
     const int64_t k = w.size(1);
     const scrapgpu_dtype dt = parse_quant(quant_type);
     TORCH_CHECK(is_quantized(dt), "ref_dequant_linear_weight expects a quantized type");
-    std::vector<float> km(static_cast<size_t>(k * m));
-    for (int64_t mi = 0; mi < m; ++mi) {
-        for (int64_t ki = 0; ki < k; ++ki) {
-            km[static_cast<size_t>(ki + mi * k)] = w[mi][ki].item<float>();
-        }
-    }
+    TORCH_CHECK(k > 0 && m > 0 && k % scrapgpu_dtype_block_size(dt) == 0,
+                "weight rows must be nonempty and aligned to the quantization block size");
+    const float * km = w.data_ptr<float>();
     scrapgpu_tensor_desc td = make_desc(dt, SCRAPGPU_LAYOUT_NATURAL, k, m, 1, 1, nullptr);
     std::vector<uint8_t> qhost(tensor_bytes(td));
-    check_status(scrapgpu_ref_quantize(dt, km.data(), qhost.data(), k * m), "quantize");
+    check_status(scrapgpu_ref_quantize(dt, km, qhost.data(), k * m), "quantize");
     std::vector<float> km_deq(static_cast<size_t>(k * m));
     check_status(scrapgpu_ref_dequantize(dt, qhost.data(), km_deq.data(), k * m), "dequantize");
     at::Tensor out = at::empty({m, k}, w.options());
-    for (int64_t mi = 0; mi < m; ++mi) {
-        for (int64_t ki = 0; ki < k; ++ki) {
-            out[mi][ki] = km_deq[static_cast<size_t>(ki + mi * k)];
-        }
-    }
+    std::memcpy(out.data_ptr<float>(), km_deq.data(), static_cast<size_t>(out.numel()) * sizeof(float));
     return out;
 }
 
@@ -533,6 +674,11 @@ TORCH_LIBRARY(scrapgpu, m) {
         .def("in_features", &WeightImpl::in_features)
         .def("out_features", &WeightImpl::out_features)
         .def("quant_type", &WeightImpl::quant_type);
+    m.def(
+        "scaled_dot_product_attention(Tensor query, Tensor key, Tensor value, Tensor? attn_mask=None, "
+        "float dropout_p=0., bool is_causal=False, float? scale=None, bool enable_gqa=False, "
+        "int query_position_offset=0, int max_workspace_bytes=67108864) -> Tensor",
+        &scaled_dot_product_attention_cpu);
     m.def("device_count", &device_count);
     m.def("device_name", &device_name);
     m.def("load", &load_library);

@@ -1,0 +1,23 @@
+# 2026-10-11T08:25:50.131290+09:00
+# /private/tmp/scrapgpu-pytorch-venv/bin/python -u -c 'EXPECTED='"'"'staging'"'"'
+import sys
+sys.path.insert(0, '"'"'adapters/pytorch'"'"')
+import torch, scrapgpu_torch as sgt
+sgt.load()
+x=torch.ones(2,8)
+f32=torch.classes.scrapgpu.Weight(torch.ones(3,8),'"'"'f32'"'"')
+assert torch.equal(torch.ops.scrapgpu.linear(x,f32),torch.full((2,3),8.0))
+bf16=torch.classes.scrapgpu.Weight(torch.ones(3,8),'"'"'bf16'"'"')
+try:
+    torch.ops.scrapgpu.linear(x,bf16)
+except RuntimeError as exc:
+    assert EXPECTED in str(exc),str(exc)
+else:
+    raise AssertionError('"'"'BF16 fallback unexpectedly accepted'"'"')
+print('"'"'PASS: F32 native executes; BF16 correctly rejected:'"'"',EXPECTED)
+'
+# environment overrides: {"SCRAPGPU_TORCH_BACKEND": "opencl11", "SCRAPGPU_TORCH_DEVICE": "0", "SCRAPGPU_TORCH_ALLOW_CPU_FALLBACK": "1", "SCRAPGPU_TORCH_MAX_STAGING_BYTES": "0"}
+/private/tmp/scrapgpu-pytorch-venv/lib/python3.14/site-packages/torch/_subclasses/functional_tensor.py:368: UserWarning: Failed to initialize NumPy: No module named 'numpy' (Triggered internally at /Users/runner/work/pytorch/pytorch/torch/csrc/utils/tensor_numpy.cpp:84.)
+  cpu = _conversion_method_template(device=torch.device("cpu"))
+cl11_ensure_program: CL11_0: Apple M2 Max, OpenCL 1.2 , kernels built (work-group sizes: element-wise 128, row 128, mat-vec 128, mat-mat 16x16)
+PASS: F32 native executes; BF16 correctly rejected: staging
