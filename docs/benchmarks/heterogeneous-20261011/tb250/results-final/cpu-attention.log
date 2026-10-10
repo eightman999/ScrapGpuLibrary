@@ -1,0 +1,6 @@
+device: CPU (cpu)
+PASS  noncausal_gqa_tiled     
+PASS  causal_decode_offset    
+PASS  masked_rows_zero        
+PASS  invalid_inputs_budget   
+4 attention runs

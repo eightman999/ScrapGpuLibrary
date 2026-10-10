@@ -1,0 +1,3 @@
+# 2026-10-11T08:24:51.208437+09:00
+# timeout -k 10 180 env PYTHONDONTWRITEBYTECODE=1 SCRAPGPU_TORCH_BACKEND=cpu SCRAPGPU_TORCH_DEVICE=0 SCRAPGPU_TORCH_ALLOW_CPU_FALLBACK=0 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/torch-venv/bin/python -u /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/src/adapters/pytorch/tests/test_backend_config.py
+PASS: repeated registration, frozen backend/device, 7 invalid configurations

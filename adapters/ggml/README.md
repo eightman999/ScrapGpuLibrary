@@ -14,6 +14,8 @@ OpenCL 1.1 だけで動く ggml バックエンド「CL11」です（llama.cpp /
 | `CMakeLists.txt` | ツリー内（`ggml_add_backend_library`）とツリー外プラグインの 2 モード |
 | `llama.cpp/` | llama.cpp への組み込み（ツリー内パッチ、`install-in-tree.sh`、手順 README） |
 
+2026-10-11 には llama.cpp `23b0202a189c44a54625aadcb37a946dd1d6278d`（ggml 0.26.0 / backend API 3）のツリー外プラグインも TB250 の5 GPUで演算・生成を検証しました。旧CPU向けの `GGML_BMI2=OFF`、`llama-completion` の使用、CPU/GPU比較時の `-fa off` は [現行フレームワークの手順](../../docs/HETEROGENEOUS_RUNTIME.md) を参照してください。以下の b11384 用コマンドと区別し、別のHEADは個別に検証します。
+
 ## ビルド（ツリー外プラグイン）
 
 llama.cpp b11384（commit `0faee50`）を `-DGGML_BACKEND_DL=ON -DBUILD_SHARED_LIBS=ON` でビルドしたうえで:

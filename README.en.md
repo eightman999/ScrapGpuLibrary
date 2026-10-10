@@ -1,6 +1,6 @@
 # ScrapGpuLibrary
 
-**A general-purpose tensor / runtime library that runs current ML software at usable speed on used and old-generation GPUs (the "scrap GPU" ones).**
+**A general-purpose tensor / runtime library that runs current ML software at usable speed on used and old-generation GPUs (the "scrap GPU" ones), legacy CPUs and system RAM.**
 
 GPUs whose driver and API are frozen (NVIDIA Fermi / Kepler, old Radeons) either cannot be used by current inference engines or are slow when they are. ScrapGpuLibrary provides the runtime, tensors, ops, quantization and backends for those GPUs without depending on a particular engine. ggml (llama.cpp), PyTorch and ONNX Runtime connect as adapters on top of it.
 
@@ -10,7 +10,7 @@ ScrapGpuLibrary
 ├─ tensor     dtype / layout / view, stride
 ├─ ops        matmul, matvec / softmax / norm / rope / attention / elementwise
 ├─ quant      q4, q8 / k-quant / device-specific packing
-├─ backends   opencl11 / opencl12 / vulkan / cuda
+├─ backends   cpu / opencl11 / vulkan / remote
 └─ adapters   ggml / PyTorch extension / ONNX Runtime / standalone C API
 ```
 
@@ -29,7 +29,15 @@ The first result is CL11, a ggml backend that runs on OpenCL 1.1 alone. Version 
 | P4 | multi-GPU transport | In progress: GT 730, GT 710, RX 6400 and WX 2100 in one process run Qwen3-8B Q4_K_M fully on the GPUs (CL11 on 4 cards: 4.63 t/s generation, 13x the CPU); GPU-to-GPU transfer and a pipeline example in the C API ([docs/MULTI_GPU.md](docs/MULTI_GPU.md)) |
 | P5 | More backends (opencl12 / vulkan / cuda) and adapters (PyTorch / ONNX Runtime) | In progress: first Vulkan slice (AMD: add, mul, RMS_NORM, mat-mul), PyTorch custom ops (stage A), ONNX Runtime plugin EP (MatMul, Add, Mul). CUDA is out of scope (it needs a driver change) |
 
-[ROADMAP.md](ROADMAP.md) collects what comes next.
+The 2026-10-11 update adds a CPU/RAM backend, BF16, opt-in CPU fallback with a staging budget, and F32 attention (GQA, causal masks and KV offsets). PyTorch can select CPU or OpenCL. The opencl12 and CUDA backends are not implemented. [ROADMAP.md](ROADMAP.md) collects what comes next.
+
+### Verified configurations (2026-10-11)
+
+- TB250 GT 430 / GT 710 / GT 730 / WX 2100 / RX 6400: PyTorch 2.14.1 operations and attention, plus llama.cpp `23b0202` operations and generation, tested on hardware. NVIDIA 390.157 was retained; AMD used rusticl.
+- 6f (i5-3230M): CPU CTest 12/12 and four PyTorch tests passed. OpenCL and CUDA are not required.
+- Mac: OpenCL CTest 15/15 and ASan / UBSan 12/12 passed.
+
+See the [usage guide and supported scope](docs/HETEROGENEOUS_RUNTIME.md) and [measurements, logs and unverified cases](docs/benchmarks/heterogeneous-20261011/README.md). PyTorch uses explicit custom operations; arbitrary CUDA calls and automatic replacement of entire models are not supported.
 
 ### Quick start
 
@@ -47,6 +55,8 @@ ctest --test-dir build --output-on-failure
 
 The CPU reference matrix operations use small panels and SSE2 to improve performance on older CPUs and reduce RAM traffic. Build the comparison benchmarks with `-DSCRAPGPU_BUILD_BENCHMARKS=ON`. See [CPU and RAM optimization](docs/CPU_RAM_OPTIMIZATION.md) (Japanese) for measurements on 6f / TB250 and reproduction commands.
 
+Register `scrapgpu_cpu_register()` to use the CPU through the regular device / buffer / stream / plan API. BF16 weights, explicitly budgeted CPU fallback, and tiled attention (GQA, causal masks and KV offsets) are available. The [heterogeneous runtime guide](docs/HETEROGENEOUS_RUNTIME.md) covers device selection, NVIDIA driver limits and tested llama.cpp / PyTorch versions. The [PyTorch adapter](adapters/pytorch/) supports both CPU and OpenCL.
+
 **2. Try the OpenCL 1.1 backend and standalone C API example**
 
 Install OpenCL headers, an ICD loader, and an OpenCL implementation for your device first.
@@ -63,12 +73,13 @@ ctest --test-dir build-opencl --output-on-failure
 
 The example uses **only the public C API, without ggml / llama.cpp**: it uploads Q4_0 weights in an R32 GPU layout, executes `MUL_MAT`, and compares the result with the CPU reference using NMSE. If no OpenCL device is found, the example exits without performing a GPU operation. GPU tests are also skipped when no device is available; **a successful test exit alone does not prove that GPU execution was verified**.
 
-For llama.cpp integration, follow the [ggml adapter instructions](adapters/ggml/) (targeting llama.cpp b11384). See [docs/BASELINES.md](docs/BASELINES.md) and [docs/CL11.md](docs/CL11.md) for measured performance and supported operations.
+For llama.cpp integration, follow the [ggml adapter instructions](adapters/ggml/) (developed against b11384, additionally verified against `23b0202`). See [docs/BASELINES.md](docs/BASELINES.md) and [docs/CL11.md](docs/CL11.md) for measured performance and supported operations.
 
 ### Where the code lives
 
 | Path | Content |
 | --- | --- |
+| `src/backends/cpu/` | Synchronous CPU backend backed by system RAM; connects the optimized reference kernels to the public device API |
 | `src/backends/opencl11/` | The OpenCL 1.1 backend: device (capabilities, generation, tuning), context (lazy queue and program creation), kernels (kernel table, program build, `.cl` embedding), buffer (allocation, limits, lazy-allocation probe), executor (launch and profiling), device_state (the runtime state of a device), tensor_abi (the descriptors passed to the kernels). No ggml includes |
 | `src/tensor/` | The tensor module, free of ggml and OpenCL: dtype, TensorDesc, views / transposition / broadcasting, division-free indexing, the R32 layout |
 | `src/core/` | The common layer that depends on neither ggml nor OpenCL: the ABI version, op contract validation, backend registration, and the CPU reference implementation (`src/core/ref/`: every op, Q4_0 / Q8_0 / Q4_K / Q6_K quantization and dequantization) |
@@ -90,14 +101,14 @@ ctest --test-dir build
 | --- | --- | --- |
 | `SCRAPGPU_BUILD_CORE` | `ON` | The common layer that uses neither ggml nor OpenCL (`scrapgpu_core`) |
 | `SCRAPGPU_BUILD_OPENCL11` | `OFF` | The OpenCL 1.1 backend (`scrapgpu_opencl11`). Defines `CL_TARGET_OPENCL_VERSION=110` |
+| `SCRAPGPU_BUILD_PYTORCH` | `OFF` | CPU/OpenCL PyTorch custom operations; requires CORE and a Python environment with PyTorch. The extension uses C++20 |
 | `SCRAPGPU_BUILD_GGML_ADAPTER` | `OFF` | The ggml adapter. `ON` adds `adapters/ggml` |
-| `SCRAPGPU_BUILD_EXAMPLES` | OPENCL11 と同じ | ggml なしの C API サンプル。OpenCL11 が必要 |
 | `SCRAPGPU_BUILD_EXAMPLES` | Same as OPENCL11 | Standalone C API example; requires OpenCL11 |
 | `SCRAPGPU_BUILD_TESTS` | `ON` | The contract tests and the dependency check |
 | `SCRAPGPU_BUILD_BENCHMARKS` | `OFF` | CPU reference matmul and CL11 host descriptor preparation benchmarks; requires CORE |
 
 - `ctest` runs the contract tests and the check that `src/core` and the public headers include neither ggml nor OpenCL, and `src/backends/opencl11` includes no ggml (`cmake/check_core_dependencies.cmake`).
-- The ggml adapter is written for llama.cpp b11384. Both the out-of-tree plugin and the in-tree patch build are described in [adapters/ggml/](adapters/ggml/).
+- The ggml adapter was developed against llama.cpp b11384; `23b0202` (ggml 0.26.0 / backend API 3) has also been verified on hardware. Both the out-of-tree plugin and the in-tree patch build are described in [adapters/ggml/](adapters/ggml/).
 - The checks a change has to pass are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ### CL11
@@ -120,7 +131,7 @@ llama-bench (`-ngl 99 -ub 128 -b 128 -p 128 -n 64`, CPU: two threads of the Cele
 | | GT 710 | 115.6 | 17.8 | 6.2 | 4.6 |
 | Qwen2-0.5B-ft Q4_0 | GT 430 | 118.5 | 36.5 | 47.5 | 25.8 |
 
-Qwen3-1.7B Q4_K_M (1.2GB) fits with all 29 layers offloaded on a GT 710 (2GB) (pp128 39.7 / tg64 7.5, CPU 2.0 / 1.6). The GT 710 has only 11.7 GB/s of bandwidth, so generating with Q8_0 is slower than the CPU (Q4_K_M is faster). On the Radeons the official Vulkan backend is faster, so CL11 is not used there ([docs/HARDWARE.md](docs/HARDWARE.md)).
+Qwen3-1.7B Q4_K_M (1.2GB) fits with all 29 layers offloaded on a GT 710 (2GB) (pp128 39.7 / tg64 7.5, CPU 2.0 / 1.6). The GT 710 has only 11.7 GB/s of bandwidth, so generating with Q8_0 is slower than the CPU (Q4_K_M is faster). For llama.cpp inference on Radeon, existing measurements favor the official Vulkan backend. The C API / PyTorch CL11 path has been verified with rusticl ([docs/HARDWARE.md](docs/HARDWARE.md)).
 
 ## Test machine
 

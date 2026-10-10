@@ -1,0 +1,4 @@
+# 2026-10-11T08:25:30.130221+09:00
+# /private/tmp/scrapgpu-pytorch-venv/bin/python -u adapters/pytorch/tests/test_backend_config.py
+# environment overrides: {"SCRAPGPU_TORCH_BACKEND": "cpu", "SCRAPGPU_TORCH_DEVICE": "0", "SCRAPGPU_TORCH_ALLOW_CPU_FALLBACK": "0"}
+PASS: repeated registration, frozen backend/device, 7 invalid configurations

@@ -27,7 +27,7 @@ cmake --build build-cl11 -j
 GGML_BACKEND_PATH=$PWD/build-cl11/libggml-cl11.so <llama.cpp>/build-dl/bin/test-backend-ops -b CL11_0
 ```
 
-CL11 is written for llama.cpp b11384 (commit `0faee50`); the ggml backend API is not stable, so another version either fails to compile or is not loaded (the configure step warns when `LLAMA_CPP_SOURCE_DIR` is a different commit). `-DGGML_NATIVE=ON` and `-DGGML_BACKEND_DL=ON` cannot be combined.
+CL11 was developed against llama.cpp b11384 (commit `0faee50`) and additionally verified against `23b0202` (ggml 0.26.0 / backend API 3). The ggml backend API is not stable; other versions require a matching build and runtime verification (configure warns when `LLAMA_CPP_SOURCE_DIR` differs from the original baseline). See [the tested legacy-CPU flags and current CLI](docs/HETEROGENEOUS_RUNTIME.md). `-DGGML_NATIVE=ON` and `-DGGML_BACKEND_DL=ON` cannot be combined.
 
 ### ggml backend in-tree
 

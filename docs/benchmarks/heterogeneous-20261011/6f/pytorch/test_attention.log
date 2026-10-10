@@ -1,0 +1,24 @@
+# 2026-10-11T08:24:48.173244+09:00
+# timeout -k 10 180 env PYTHONDONTWRITEBYTECODE=1 SCRAPGPU_TORCH_BACKEND=cpu SCRAPGPU_TORCH_DEVICE=0 SCRAPGPU_TORCH_ALLOW_CPU_FALLBACK=0 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/torch-venv/bin/python -u /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/src/adapters/pytorch/tests/test_attention.py
+/home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/torch-venv/lib/python3.14/site-packages/torch/_subclasses/functional_tensor.py:368: UserWarning: Failed to initialize NumPy: No module named 'numpy' (Triggered internally at /__w/pytorch/pytorch/torch/csrc/utils/tensor_numpy.cpp:84.)
+  cpu = _conversion_method_template(device=torch.device("cpu"))
+PASS: dense
+PASS: causal rectangular
+PASS: custom scale
+PASS: zero scale
+PASS: negative scale
+PASS: GQA
+PASS: MQA
+PASS: additive 2D mask
+PASS: additive broadcast mask
+PASS: per-head mask
+PASS: bool mask including fully masked row
+PASS: fully masked additive row
+PASS: large finite negative mask
+PASS: bool scalar mask
+PASS: all-masked scalar
+PASS: causal KV offset 2
+PASS: causal KV offset 20
+PASS: one-query workspace tiling
+PASS: 16 schema/semantic rejections
+PASS: 18 attention oracles, 16 rejections, 12 concurrent calls; torch=2.14.1+cpu, backend=cpu

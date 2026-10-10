@@ -1,0 +1,28 @@
+# 2026-10-11T08:15:02.704970+09:00
+# flock -w 300 /home/eightman/bench/gpu-bench.lock timeout -k 10 180 env SCRAPGPU_TORCH_BACKEND=opencl11 SCRAPGPU_TORCH_DEVICE=0 SCRAPGPU_TORCH_ALLOW_CPU_FALLBACK=1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 THERMAL_WAIT_MAX=120 GGML_CL11_PLATFORMS=NVIDIA bash /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/src/adapters/ggml/tools/kepler-sweep/gpu_exec.sh 'GT 430' /home/eightman/bench/conv-venv/bin/python -u /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/src/adapters/pytorch/tests/test_ops.py
+device: GeForce GT 430; torch=2.14.1+cpu
+cl11_ensure_program: rebuilding the kernels with smaller work-groups
+cl11_ensure_program: CL11_0: GeForce GT 430, OpenCL 1.1 CUDA, kernels built (work-group sizes: element-wise 128, row 128, mat-vec 128, mat-mat 16x16)
+dtype/autograd/schema rejections and 12 concurrent linear/add calls OK
+  linear_f32: NMSE 4.406e-14 OK
+  linear_vec_f32: NMSE 8.724e-15 OK
+  linear_f16: NMSE 4.742e-14 OK
+  linear_bf16: NMSE 3.927e-14 OK
+  linear_f16_subnormal: NMSE 4.150e-14 OK
+  linear_q4_0: NMSE 3.403e-14 OK
+  linear_q8_0: NMSE 4.573e-14 OK
+  linear_q4_k: NMSE 1.241e-13 OK
+  linear_q6_k: NMSE 6.625e-14 OK
+  add: NMSE 0.000e+00 OK
+  silu: NMSE 2.640e-15 OK
+  rms_norm: NMSE 6.693e-15 OK
+  rope: NMSE 1.962e-15 OK
+  add_empty: NMSE 0.000e+00 OK
+  silu_empty: NMSE 0.000e+00 OK
+  rms_norm_empty: NMSE 0.000e+00 OK
+  add_empty_inner: NMSE 0.000e+00 OK
+  rope_empty: NMSE 0.000e+00 OK
+  module_initial: NMSE 4.406e-14 OK
+  module_weight_update: NMSE 3.152e-14 OK
+  module_inference_mode: NMSE 4.406e-14 OK
+all ops OK

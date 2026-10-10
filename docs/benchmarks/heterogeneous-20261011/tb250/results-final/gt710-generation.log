@@ -1,0 +1,33 @@
+0.01.107.111 I llama_completion: llama backend init
+0.01.107.123 I llama_completion: load the model and apply lora adapter, if any
+cl11_ensure_program: CL11_0: multi mat-vec (Q / K / V, FFN gate / up in one launch) enabled
+cl11_ensure_program: CL11_0: mat-mat variant: tile 64 x 64, 8 x 4 values per work-item, BK 16, unroll 16, prefetch 0, 128 work-items
+cl11_ensure_program: CL11_0: GeForce GT 710, OpenCL 1.2 CUDA, kernels built (work-group sizes: element-wise 128, row 128, mat-vec 128, mat-mat 16x16)
+0.01.812.245 W load: control-looking token: 128247 '</s>' was not control-type; this is probably a bug in the model. its type will be overridden
+0.03.270.812 I cmn          init: llama threadpool init, n_threads = 2
+0.03.774.875 I 
+0.03.774.940 I system_info: n_threads = 2 (n_threads_batch = 2) / 2 | CPU : SSE3 = 1 | SSSE3 = 1 | LLAMAFILE = 1 | OPENMP = 1 | REPACK = 1 | 
+0.03.774.940 I 
+0.03.775.010 I sampler seed: 4294967295
+0.03.775.022 I sampler params: 
+	repeat_last_n = 64, repeat_penalty = 1.000, frequency_penalty = 0.000, presence_penalty = 0.000
+	dry_multiplier = 0.000, dry_base = 1.750, dry_allowed_length = 2, dry_penalty_last_n = 64
+	top_k = 40, top_p = 0.950, min_p = 0.050, xtc_probability = 0.000, xtc_threshold = 0.100, typical_p = 1.000, top_n_sigma = -1.000, temp = 0.000
+	mirostat = 0, mirostat_lr = 0.100, mirostat_ent = 5.000, adaptive_target = -1.000, adaptive_decay = 0.900
+0.03.775.028 I sampler chain: logits -> ?penalties -> ?dry -> ?top-n-sigma -> top-k -> ?typical -> top-p -> min-p -> ?xtc -> temp-ext -> greedy 
+0.03.775.028 I generate: n_ctx = 256, n_batch = 64, n_predict = 16, n_keep = 0
+0.03.775.029 I 
+ ____.
+A. Paris
+B. Rome
+C. London
+D.
+
+0.05.167.443 I common_perf_print:    sampling time =       6.57 ms
+0.05.167.444 I common_perf_print:    samplers time =       2.24 ms /    21 tokens
+0.05.167.448 I common_perf_print:        load time =    2088.62 ms
+0.05.167.450 I common_perf_print: prompt eval time =     483.19 ms /     5 tokens (   96.64 ms per token,    10.35 tokens per second)
+0.05.167.452 I common_perf_print:        eval time =     902.12 ms /    15 runs   (   60.14 ms per token,    16.63 tokens per second)
+0.05.167.453 I common_perf_print:       total time =    1392.58 ms /    20 tokens
+0.05.167.454 I common_perf_print: unaccounted time =       0.69 ms /   0.0 %      (total - sampling - prompt eval - eval) / (total)
+0.05.167.454 I common_perf_print:    graphs reused =         14

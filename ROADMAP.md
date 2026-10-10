@@ -52,7 +52,7 @@ ggml を使わずに C API だけでテンソル演算を GPU で実行できる
 
 **Gate 3**: Gate 2 と同じ TB250 の回帰（6 構成、BASELINES.md と比べる）と、ggml を使わない単体試験と例が TB250 の 6 構成と Mac で通ること。
 
-## P4 multi-GPU transport — C API の転送は済み（実機の複数 GPU での検証は残る）
+## P4 multi-GPU transport — C API と4枚構成を実機検証済み、拡張は継続
 
 層ごとに GPU を分けるパイプライン分割です。検証機の 5 枚の GPU はすべて PCIe x1 で、ホスト経由の転送は約 0.40 GB/s です。層ごとに分ければ GPU 間を流れるのは活性化だけで、隠れ層 4096 の FP32 なら 1 トークン・1 区間あたり 16KB、約 40µs で済みます。合計 VRAM は約 10GB あるので、1 枚には載らない 8B 級のモデルを全層 GPU で動かせる見込みがあります。
 
@@ -64,13 +64,13 @@ ggml を使わずに C API だけでテンソル演算を GPU で実行できる
 
 残る項目:
 
-- TB250 の実機（2 Kepler + 2 AMD、1 プロセス）での動作確認と速度の測定（PCIe x1 で活性化 16KB / 層境界あたり約 40µsに対するオーバーヘッド）。NVIDIA 390 の「1 プロセスで 2 枚目の GPU を開けない」は Fermi + Kepler の組合せで発生し、Kepler 同士と NVIDIA + AMD は 1 プロセスで動くことを C API で確認済み（[docs/HARDWARE.md](docs/HARDWARE.md)）。
+- TB250 の4 GPU構成の動作・速度は確認済み（下記）。転送オーバーヘッドの詳細測定は継続する（PCIe x1 で活性化 16KB / 層境界あたり約 40µsとの比較）。NVIDIA 390 の「1 プロセスで 2 枚目の GPU を開けない」は Fermi + Kepler の組合せで発生し、Kepler 同士と NVIDIA + AMD は 1 プロセスで動くことを C API で確認済み（[docs/HARDWARE.md](docs/HARDWARE.md)）。
 - プロセスを分けて共有メモリで受け渡す transport（Fermi を含む構成用）。
 - 転送専用の 2 本目の stream と event、PyTorch の PrivateUse1 で必要になる確保・解放のフックとの関係（[docs/API_CONTRACT.md](docs/API_CONTRACT.md) 11 章の未決事項）。
 
 **実施状況（2026-10-10）**：1 プロセスで GT 730・GT 710・RX 6400・WX 2100 の 4 枚を使えることを確認し（Fermi と Kepler は同じプロセスで使えない）、Qwen3-8B Q4_K_M を全層 GPU で動かした（CL11 4 枚で生成 4.63 t/s、CPU だけの約 13 倍）。C API に GPU 間の転送（`scrapgpu_tensor_copy`）とパイプライン分割の例を加え、実機で一致を確認した。結果と次の課題は [docs/MULTI_GPU.md](docs/MULTI_GPU.md)。
 
-## P5 バックエンドと adapter の追加 — 未着手
+## P5 バックエンドと adapter の追加 — 実施中
 
 | 追加するもの | 前提・方針 |
 | --- | --- |
@@ -83,6 +83,15 @@ ggml を使わずに C API だけでテンソル演算を GPU で実行できる
 adapter ごとに試験を定めます。リポジトリへの取り込み可否と条件は [docs/REUSE.md](docs/REUSE.md) のとおりです。
 
 **実施状況（2026-10-10）**：Vulkan バックエンドの最初の段階（`src/backends/vulkan`、AMD の RADV で加算・乗算・RMS_NORM・F32 / F16 / Q4_0 / Q8_0 の行列積、TB250 の RX 6400 と WX 2100 で全件通過）、PyTorch adapter の Stage A（`adapters/pytorch`、`torch.ops.scrapgpu.*`）、ONNX Runtime のプラグイン EP（`adapters/onnxruntime`、MatMul・Add・Mul）。CUDA は sudo でのドライバ切り替えが要るので対象外。opencl12 は未着手。
+
+### 旧式 CPU・異世代 GPU と現行フレームワーク（2026-10-11）
+
+- `src/backends/cpu/` を追加し、システム RAM を device / buffer / stream / plan API に接続。既存の SSE2 / portable 行列演算を利用し、BF16 の行列積・コピーを追加。
+- 明示的な CPU fallback と staging 上限、F32 のタイル化 Attention（GQA・causal・mask・KV offset）を追加。RX6400+Clover の既知のハング構成は列挙から除外。
+- PyTorch 2.14.1 の CPU/OpenCL 選択と custom SDPA を、TB250 のCPU・5 GPUおよび6fで検証。
+- llama.cpp `23b0202` のプラグイン・演算・生成を TB250 5 GPU で検証。旧CPU向けにAVXだけでなくBMI2も無効にするビルド手順を記録。
+
+[手順と制約](docs/HETEROGENEOUS_RUNTIME.md)、[実測記録](docs/benchmarks/heterogeneous-20261011/README.md)。残る項目は PrivateUse1、全モデルの透過的offload、学習/autograd、FP8、llama.cpp Flash AttentionのCL11対応、現行HEADでの大型モデル・MoE・長時間試験。opencl12・CUDA backendは未実装。
 
 ## 既知のリスクと未決
 
@@ -127,8 +136,10 @@ adapter ごとに試験を定めます。リポジトリへの取り込み可否
 
 **P3 (done, Gate 3 on 2026-10-10).** Tensor / ops / quant and a C API that works without ggml, in six steps S1-S6 (device runtime state, `cl11_tensor` and descriptors, the R32 packing, the ops and their support logic, the public API, then the CPU reference implementation, the per-op unit tests and a ggml-free example). S6 is independent of S1-S5 and can run in parallel. Gate 3: the Gate 2 TB250 regression plus the ggml-free tests and examples on the six TB250 configurations and on a Mac.
 
-**P4 (transport in the C API done on 2026-10-10; runs on the multi-GPU test machine pending).** `scrapgpu_tensor_copy` moves a contiguous tensor of a matching dtype and shape between any two devices: one device-side copy on the same device, a blocking read plus a write through a host staging buffer across devices or backends (OpenCL 1.1 has no cross-context events), ordered after the work already enqueued on the source stream and before the work enqueued later on the destination stream; R32 tensors are rejected with a reason. ABI 0.4 adds `stream_device` at the end of the backend vtable for the same-device fast path. `examples/pipeline_mlp.c` splits an L-layer SwiGLU MLP (residual add and RMS_NORM, Q4_0 R32 weights) round-robin or by `SCRAPGPU_PIPELINE_SPLIT` counts over all reported devices, checks the result against `scrapgpu_ref_execute` (NMSE), and prints the time per token for one device vs all devices (it runs unchanged on a single GPU); `tests/ops` compares the copied bytes exactly, across devices when a second device exists. Open: running and timing it on the TB250 four-GPU machine (2 Kepler + 2 AMD in one process; the NVIDIA 390 second-GPU failure is confirmed through the C API to hit Fermi+Kepler pairs only, see docs/HARDWARE.md), the shared-memory transport with one process per device, and second streams / events.
+**P4 (C API transport and four-GPU inference verified on 2026-10-10; further work continues).** `scrapgpu_tensor_copy` moves a contiguous tensor of a matching dtype and shape between any two devices: one device-side copy on the same device, a blocking read plus a write through a host staging buffer across devices or backends (OpenCL 1.1 has no cross-context events), ordered after the work already enqueued on the source stream and before the work enqueued later on the destination stream; R32 tensors are rejected with a reason. ABI 0.4 adds `stream_device` at the end of the backend vtable for the same-device fast path. `examples/pipeline_mlp.c` splits an L-layer SwiGLU MLP (residual add and RMS_NORM, Q4_0 R32 weights) round-robin or by `SCRAPGPU_PIPELINE_SPLIT` counts over all reported devices, checks the result against `scrapgpu_ref_execute` (NMSE), and prints the time per token for one device vs all devices (it runs unchanged on a single GPU); `tests/ops` compares the copied bytes exactly, across devices when a second device exists. The four-GPU configuration (2 Kepler + 2 AMD) has been verified, including Qwen3-8B Q4_K_M at 4.63 t/s; see [docs/MULTI_GPU.md](docs/MULTI_GPU.md). Fermi+Kepler still requires separate processes. Further transfer-overhead measurements, the shared-memory transport and second streams / events remain open.
 
-**P5 (not started).** opencl12 (shared kernels, CLBlast tuner, dlprimitives-style program cache), vulkan (ported mat-vec and dequant shaders on volk / vk-bootstrap / VMA, AMD only because the NVIDIA 390 Vulkan ICD crashes), cuda (reference only, lowest priority), and the PyTorch (custom ops first, then PrivateUse1) and ONNX Runtime (plugin EP, ORT 1.24+) adapters. What may be taken in is decided by [docs/REUSE.md](docs/REUSE.md).
+**P5 (in progress).** opencl12 (shared kernels, CLBlast tuner, dlprimitives-style program cache), vulkan (ported mat-vec and dequant shaders on volk / vk-bootstrap / VMA, AMD only because the NVIDIA 390 Vulkan ICD crashes), cuda (reference only, lowest priority), and the PyTorch (custom ops first, then PrivateUse1) and ONNX Runtime (plugin EP, ORT 1.24+) adapters. What may be taken in is decided by [docs/REUSE.md](docs/REUSE.md).
+
+**Legacy CPU and current framework support (2026-10-11).** A synchronous CPU/RAM backend exposes the existing SSE2 / portable kernels through the device API, with BF16 matmul and copies, opt-in CPU fallback bounded by a staging budget, and F32 tiled attention (GQA, causal and additive masks, KV offsets). PyTorch 2.14.1 CPU/OpenCL custom operations were verified on the TB250 CPU and all five GPUs, plus 6f. llama.cpp `23b0202` plugin loading, operations and generation were verified on all five TB250 GPUs; the legacy CPU build disables BMI2 as well as AVX. RX6400+Clover is excluded to prevent the known hang. See the [guide](docs/HETEROGENEOUS_RUNTIME.md) and [results](docs/benchmarks/heterogeneous-20261011/README.md). PrivateUse1, transparent model offload, autograd, FP8, CL11 Flash Attention, and current-HEAD large-model / MoE / long-run verification remain open. opencl12 and CUDA are not implemented.
 
 **Known risks.** The out-of-tree and in-tree build paths of `adapters/ggml` can drift apart; internal symbols can leak out of `libggml-cl11.so`; the core must stay free of ggml and OpenCL includes (checked by `ctest`); the fusion planner still depends on the ggml graph; and every abstraction has to keep the launch path allocation-free, with the kernel variant chosen once at plan build, because decode pays for each launch.

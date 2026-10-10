@@ -1,0 +1,8 @@
+# 2026-10-11T08:25:36.487038+09:00
+# /private/tmp/scrapgpu-pytorch-venv/bin/python -u adapters/pytorch/examples/mlp.py
+# environment overrides: {"SCRAPGPU_TORCH_BACKEND": "cpu", "SCRAPGPU_TORCH_DEVICE": "0", "SCRAPGPU_TORCH_ALLOW_CPU_FALLBACK": "0"}
+/private/tmp/scrapgpu-pytorch-venv/lib/python3.14/site-packages/torch/_subclasses/functional_tensor.py:368: UserWarning: Failed to initialize NumPy: No module named 'numpy' (Triggered internally at /Users/runner/work/pytorch/pytorch/torch/csrc/utils/tensor_numpy.cpp:84.)
+  cpu = _conversion_method_template(device=torch.device("cpu"))
+max abs diff (q4_0 MLP vs nn.Linear): 4.155266e-02
+OK
+max abs diff (f32 ScrapMLP vs nn.Linear): 1.192093e-07

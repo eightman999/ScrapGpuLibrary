@@ -1,0 +1,41 @@
+Test project /home/eightman/dev/tools/ScrapGpuLibrary-heterogeneous-20261011/build
+      Start  1: scrapgpu_core_contract_tests
+ 1/18 Test  #1: scrapgpu_core_contract_tests ..........   Passed    0.00 sec
+      Start  2: scrapgpu_compat_tests
+ 2/18 Test  #2: scrapgpu_compat_tests .................   Passed    0.00 sec
+      Start  3: scrapgpu_cpu_tests
+ 3/18 Test  #3: scrapgpu_cpu_tests ....................   Passed    0.00 sec
+      Start  4: scrapgpu_cpu_boundary_tests
+ 4/18 Test  #4: scrapgpu_cpu_boundary_tests ...........   Passed    0.00 sec
+      Start  5: scrapgpu_attention_tests
+ 5/18 Test  #5: scrapgpu_attention_tests ..............   Passed    0.00 sec
+      Start  6: scrapgpu_attention_tests_opencl11
+ 6/18 Test  #6: scrapgpu_attention_tests_opencl11 .....   Passed    2.80 sec
+      Start  7: scrapgpu_public_headers_c
+ 7/18 Test  #7: scrapgpu_public_headers_c .............   Passed    0.00 sec
+      Start  8: scrapgpu_public_headers_cpp
+ 8/18 Test  #8: scrapgpu_public_headers_cpp ...........   Passed    0.00 sec
+      Start  9: scrapgpu_tensor_tests
+ 9/18 Test  #9: scrapgpu_tensor_tests .................   Passed    0.00 sec
+      Start 10: scrapgpu_r32_tests
+10/18 Test #10: scrapgpu_r32_tests ....................   Passed    0.00 sec
+      Start 11: scrapgpu_ref_ops_tests
+11/18 Test #11: scrapgpu_ref_ops_tests ................   Passed    0.08 sec
+      Start 12: scrapgpu_ref_quant_tests
+12/18 Test #12: scrapgpu_ref_quant_tests ..............   Passed    0.00 sec
+      Start 13: scrapgpu_device_policy_tests
+13/18 Test #13: scrapgpu_device_policy_tests ..........   Passed    0.00 sec
+      Start 14: scrapgpu_ops_tests
+14/18 Test #14: scrapgpu_ops_tests ....................   Passed    2.23 sec
+      Start 15: scrapgpu_dependency_check
+15/18 Test #15: scrapgpu_dependency_check .............   Passed    0.01 sec
+      Start 16: scrapgpu_pytorch_ops_cpu
+16/18 Test #16: scrapgpu_pytorch_ops_cpu ..............   Passed    2.27 sec
+      Start 17: scrapgpu_pytorch_attention_cpu
+17/18 Test #17: scrapgpu_pytorch_attention_cpu ........   Passed    2.26 sec
+      Start 18: scrapgpu_pytorch_backend_config_cpu
+18/18 Test #18: scrapgpu_pytorch_backend_config_cpu ...   Passed   12.99 sec
+
+100% tests passed out of 18
+
+Total Test time (real) =  22.68 sec

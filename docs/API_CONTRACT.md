@@ -9,6 +9,7 @@
 - 公開 API は C（`scrapgpu_` 接頭辞）。内部は C++17。C++ の型・例外・STL を公開ヘッダに出さない。
 - ハンドルは不透明なポインタ（`scrapgpu_device_t`、`scrapgpu_buffer_t`、`scrapgpu_stream_t`、`scrapgpu_plan_t`）。
 - 拡張に備え、呼び出し側が渡す構造体は先頭に `size_t struct_size` を持つ。ライブラリは知らない末尾のフィールドを無視し、足りない場合は既定値を使う。
+- 必須フィールドを含まない記述子は `INVALID_ARGUMENT`。op の入力・出力には完全な `scrapgpu_tensor_desc` が必要。出力用の device info は短いバッファを受け付け、呼び出し側の `struct_size` を保持する。
 - `SCRAPGPU_ABI_VERSION_MAJOR / MINOR`。MAJOR が変わると互換性がない。`scrapgpu_get_abi_version()` で実行時にも確認できる。
 - ggml プラグイン（`libggml-cl11.so`）は Core と CL11 バックエンドを静的にリンクし、ggml の API 以外のシンボルを外へ出さない（`-fvisibility=hidden`）。
 
@@ -94,6 +95,9 @@ ROPE と SOFT_MAX の任意入力は、`desc->inputs[]` の固定順で渡す。
 
 - Core は「この op はこの device で実行できない」と理由つきで返すだけで、勝手に CPU で計算しない。
 - 単体テストと standalone API のために、CPU の参照実装（F32、量子化の逆変換は ggml の `ggml-quants.c` から移植）を Core に持つ。旧式 CPU 向けの `MUL_MAT` は、K 方向の加算順を維持した小さな panel と SSE2 / portable 経路で高速化する（[CPU_RAM_OPTIMIZATION.md](CPU_RAM_OPTIMIZATION.md)）。自動 CPU fallback の追加は意味しない。
+- CPU backend は `scrapgpu_cpu_register()` で明示登録し、同期 stream と RAM buffer を通常の device / op / plan API へ接続する。
+- `scrapgpu_op_execute_compatible()` は追加の opt-in API。native の対応判定が `UNSUPPORTED` の場合だけ、明示された staging 予算内で CPU 参照実行する。native 実行後のエラーは再試行しない。通常の `scrapgpu_op_execute()` の挙動は変えない。
+- BF16 の CPU 行列積と浮動小数点コピー、F32 のタイル化 Attention を追加した。制約・配置・予算・実行経路は [HETEROGENEOUS_RUNTIME.md](HETEROGENEOUS_RUNTIME.md)、`compat.h`、`attention.h` を参照。以下の Gate 1 表は当時の固定記録であり、現行の全対応範囲を示すものではない。
 
 ## 11. 未決事項
 

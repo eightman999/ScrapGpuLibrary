@@ -1,0 +1,35 @@
+# 2026-10-11T08:25:18.881928+09:00
+# cmake --build build-pytorch-cpu --target _C -j 4
+# environment overrides: {}
+-- Found Python3: /private/tmp/scrapgpu-pytorch-venv/bin/python (found version "3.14.7") found components: Interpreter
+/private/tmp/scrapgpu-pytorch-venv/lib/python3.14/site-packages/torch/_subclasses/functional_tensor.py:368: UserWarning: Failed to initialize NumPy: No module named 'numpy' (Triggered internally at /Users/runner/work/pytorch/pytorch/torch/csrc/utils/tensor_numpy.cpp:84.)
+  cpu = _conversion_method_template(device=torch.device("cpu"))
+CMake Warning at /private/tmp/scrapgpu-pytorch-venv/lib/python3.14/site-packages/torch/share/cmake/Torch/TorchConfig.cmake:22 (message):
+  library kineto not found.
+Call Stack (most recent call first):
+  /private/tmp/scrapgpu-pytorch-venv/lib/python3.14/site-packages/torch/share/cmake/Torch/TorchConfig.cmake:119 (append_torchlib_if_found)
+  adapters/pytorch/CMakeLists.txt:14 (find_package)
+
+
+-- Configuring done (1.4s)
+-- Generating done (0.0s)
+-- Build files have been written to: /Users/eightman/dev/tools/ScrapGpuLibrary-heterogeneous/build-pytorch-cpu
+[  6%] Building CXX object CMakeFiles/scrapgpu_tensor.dir/src/tensor/tensor.cpp.o
+[ 12%] Linking CXX static library libscrapgpu_tensor.a
+[ 12%] Built target scrapgpu_tensor
+[ 18%] Building CXX object CMakeFiles/scrapgpu_core.dir/src/core/op.cpp.o
+[ 25%] Building CXX object CMakeFiles/scrapgpu_core.dir/src/core/compat.cpp.o
+[ 31%] Building CXX object CMakeFiles/scrapgpu_core.dir/src/core/attention.cpp.o
+[ 37%] Building CXX object CMakeFiles/scrapgpu_core.dir/src/core/ref/f16.cpp.o
+[ 43%] Building CXX object CMakeFiles/scrapgpu_core.dir/src/core/ref/ops.cpp.o
+[ 50%] Building CXX object CMakeFiles/scrapgpu_core.dir/src/core/ref/quant.cpp.o
+[ 56%] Building CXX object CMakeFiles/scrapgpu_core.dir/src/core/registry.cpp.o
+[ 62%] Building CXX object CMakeFiles/scrapgpu_core.dir/src/core/status.cpp.o
+[ 68%] Building CXX object CMakeFiles/scrapgpu_core.dir/src/core/tensor.cpp.o
+[ 75%] Building CXX object CMakeFiles/scrapgpu_core.dir/src/core/transport.cpp.o
+[ 81%] Building CXX object CMakeFiles/scrapgpu_core.dir/src/backends/cpu/api.cpp.o
+[ 87%] Linking CXX static library libscrapgpu_core.a
+[ 87%] Built target scrapgpu_core
+[ 93%] Building CXX object adapters/pytorch/CMakeFiles/_C.dir/src/torch_api.cpp.o
+[100%] Linking CXX shared library /Users/eightman/dev/tools/ScrapGpuLibrary-heterogeneous/adapters/pytorch/scrapgpu_torch/_C.so
+[100%] Built target _C
