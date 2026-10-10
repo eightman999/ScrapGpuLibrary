@@ -320,6 +320,20 @@ Phase 2 implemented (2026-10-09): OpenCL runtime device probing/tuning (`device.
 - 各ステップで `clBuildProgram` に渡すソースとオプションが分割前とバイト単位で同じことを、Mac で確認した（既定・kepler・fermi の調整）。
 - Phase 3 に持ち越す点：バックエンド側のエラー出力が ggml のログではなく `stderr` になった（ログのコールバックを入れる）。`install-in-tree.sh` は、別の git リポジトリの中にあるディレクトリーに対して実行すると、パッチを「適用済み」と誤判定する（分割前からの挙動）。
 
+### Gate 3 の判定（2026-10-10、`ceb42bb` + `f1ab730`）
+
+**Go**。ggml を使わずに、ScrapGpuLibrary の公開 C API だけで GPU のテンソル演算を呼べる（Phase 3 の目標）。
+
+| 確認 | 結果 |
+| --- | --- |
+| ggml なしの演算の試験（`tests/ops`、GPU と CPU 参照実装を NMSE で比較） | TB250 の 6 構成すべて FAIL 0（NVIDIA 84 件、AMD 85 件。NVIDIA の SKIP 1 件は、mvt_groups の経路だけが受ける形の CONT_MUL_MAT で、ggml adapter と同じ判定）。NMSE は最大 1.3e-11。Mac も全件通過 |
+| ggml なしの例（`examples/standalone_matmul.c`、Q4_0 の MUL_MAT） | 6 構成とも NMSE 3e-14 以下。1 回あたり 0.08〜0.42 ms |
+| Gate 2 と同じ回帰（`ceb42bb`） | 6 構成すべて基準以内。NVIDIA の差は −1.1%〜+0.2%、AMD は許容幅以内（RX 6400 の tg は −5.0%）。起動回数・`test-backend-ops`・greedy の一致は分割前と同じ |
+| `f1ab730`（下記の修正）の NVIDIA の回帰 | 3 枚とも基準以内（GT 710 −0.9% が最大）、`attn_check` 8 / 8、greedy 一致 |
+
+- 見つかった不具合：V キャッシュのカーネル `k_mvt_f16`（mvt_groups を使わない NVIDIA の経路）は、位置を S 個に分けるときの 1 区間の長さを floor(K / S) を 8 に切り上げた値にしていた。K < S なら結果が 0 になり、floor(K / S) が 8 の倍数で K が S で割り切れないときは末尾の位置が落ちる。llama.cpp は n_kv を 256 の倍数にそろえるので、通常のモデル（S が 256 を割り切る 2 のべき）では起きない。C API の試験（n_kv = 24）が TB250 の NVIDIA で NMSE 1.0 を出して見つかった。ceil(K / S) を 8 に切り上げる形に直した（`f1ab730`。S が K を割り切るときは値が変わらない）。
+- `clBuildProgram` のオプションは変わらず、変わったのはカーネルのソースだけ（この修正による）。
+
 ## 6. リスクと未決
 
 | 項目 | リスク | 未決 / 提案 |

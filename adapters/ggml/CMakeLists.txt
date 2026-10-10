@@ -54,10 +54,15 @@ if (NOT TARGET scrapgpu_opencl11)
                 "${CL11_OPENCL11_DIR}/context.cpp"
                 "${CL11_OPENCL11_DIR}/device.cpp"
                 "${CL11_OPENCL11_DIR}/device_state.cpp"
-                "${CL11_OPENCL11_DIR}/kernels.cpp")
+                "${CL11_OPENCL11_DIR}/kernels.cpp"
+                "${CL11_OPENCL11_DIR}/ops.cpp"
+                "${CL11_OPENCL11_DIR}/ops_matmul.cpp"
+                "${CL11_OPENCL11_DIR}/ops_moe.cpp"
+                "${CL11_OPENCL11_DIR}/ops_support.cpp"
+                "${CL11_OPENCL11_DIR}/r32.cpp")
     get_filename_component(CL11_BACKENDS_DIR "${CL11_OPENCL11_DIR}/.." ABSOLUTE)
     target_include_directories(scrapgpu_opencl11 PUBLIC "${CL11_BACKENDS_DIR}" "${CL11_OPENCL11_DIR}")
-    target_link_libraries(scrapgpu_opencl11 PUBLIC ${OpenCL_LIBRARIES})
+    target_link_libraries(scrapgpu_opencl11 PUBLIC ${OpenCL_LIBRARIES} scrapgpu_tensor)
     target_include_directories(scrapgpu_opencl11 PUBLIC ${OpenCL_INCLUDE_DIRS})
     target_compile_features(scrapgpu_opencl11 PUBLIC cxx_std_17)
     target_compile_definitions(scrapgpu_opencl11 PUBLIC

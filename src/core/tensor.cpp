@@ -27,8 +27,9 @@ int scrapgpu_tensor_r32_eligible(const scrapgpu_tensor_desc * desc) {
     if (desc == nullptr) {
         return 0;
     }
-    const sgt::TensorDesc d = sgt::desc_of(*desc);
-    return sgt::dtype_is_repackable(d.dtype) && sgt::is_contiguous_strict(d) && (d.nb[2] % 16u) == 0u ? 1 : 0;
+    // the same answer as the backend rule (sgt::r32_eligible): a repackable dtype, contiguous in the
+    // ggml sense, and ne2 * ne3 == 1 or 16-byte aligned slice strides
+    return sgt::r32_eligible(sgt::desc_of(*desc)) ? 1 : 0;
 }
 
 }

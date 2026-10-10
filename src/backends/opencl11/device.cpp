@@ -57,14 +57,7 @@ std::string cl11_lower(std::string s) {
 //     parentheses are the family names of radeonsi: polarisNN, vegaNN, tonga, hawaii, ... are GCN, naviNN and the APUs below are RDNA);
 //  4. the marketing name: "Pro WX" (Polaris / Vega) and "RX nnn" (3 digits: RX 4xx / 5xx = Polaris) are GCN, "RX nnnn" (4 digits: 5000 - 9000) RDNA.
 // A GPU whose generation cannot be determined is CL11_AMD_UNKNOWN and gets the same (safe) settings as RDNA.
-enum cl11_amd_gen {
-    CL11_AMD_NONE,    // not an AMD GPU
-    CL11_AMD_GCN,     // GCN (gfx6 - gfx9: Southern Islands .. Vega); CDNA is GCN-based as well
-    CL11_AMD_RDNA,    // RDNA 1 - 4 (gfx10 and later)
-    CL11_AMD_UNKNOWN, // AMD, generation not determined
-};
-
-static cl11_amd_gen cl11_amd_generation(const cl11_device_info & info) {
+cl11_amd_gen cl11_amd_generation(const cl11_device_info & info) {
     const std::string lname   = cl11_lower(info.name);
     const std::string lvendor = cl11_lower(info.vendor);
     const bool amd = lvendor.find("amd") != std::string::npos || lvendor.find("advanced micro") != std::string::npos ||
@@ -375,9 +368,13 @@ cl11_tuning cl11_tuning_for(const cl11_device_info & info) {
     return t;
 }
 
-// GGML_CL11_DEVICES: comma separated list of substrings of the device names (case insensitive)
+// GGML_CL11_DEVICES (or its alias SCRAPGPU_OPENCL11_DEVICES, used when the first is not set):
+// comma separated list of substrings of the device names (case insensitive)
 bool cl11_device_selected(const std::string & name) {
     const char * env = getenv("GGML_CL11_DEVICES");
+    if (env == nullptr) {
+        env = getenv("SCRAPGPU_OPENCL11_DEVICES");
+    }
     if (env == nullptr || *env == '\0') {
         return true;
     }

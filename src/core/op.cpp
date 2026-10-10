@@ -1,5 +1,7 @@
 #include "scrapgpu/op.h"
 
+#include "scrapgpu/backend.h"
+
 #include <cstddef>
 
 namespace {
@@ -145,11 +147,28 @@ scrapgpu_status scrapgpu_op_desc_validate(const scrapgpu_op_desc * desc) {
             if (validate_counts(desc, 1, 1) != SCRAPGPU_STATUS_OK) return SCRAPGPU_STATUS_INVALID_ARGUMENT;
             return is_f32(desc->inputs[0]) && desc->outputs[0].dtype == SCRAPGPU_DTYPE_I32 ? SCRAPGPU_STATUS_OK : invalid("ARGSORT/TOP_K dtype contract failed");
         case SCRAPGPU_OP_RMS_NORM_MUL:
+            // inputs [x, w], output [dst]
+            if (!has_params(desc, sizeof(scrapgpu_rms_norm_params))) return invalid("RMS_NORM_MUL params are missing");
+            return validate_counts(desc, 2, 1);
         case SCRAPGPU_OP_ADD_RMS_NORM_MUL:
+            // inputs [a, b, w], outputs [add, dst]
+            if (!has_params(desc, sizeof(scrapgpu_rms_norm_params))) return invalid("ADD_RMS_NORM_MUL params are missing");
+            return validate_counts(desc, 3, 2);
         case SCRAPGPU_OP_SET_ROWS_PAIR:
+            // inputs [src0_a, ids_a, src0_b, ids_b], outputs [dst_a, dst_b]
+            return validate_counts(desc, 4, 2);
         case SCRAPGPU_OP_MUL_MAT_MULTI:
+            // inputs [w_0 .. w_{n-1}, x (shared)], outputs [d_0 .. d_{n-1}], 2 <= n <= 3
+            if (desc->struct_size < offsetof(scrapgpu_op_desc, params_size) + sizeof(desc->params_size)) {
+                return invalid("op desc is too small");
+            }
+            if (desc->output_count < 2 || desc->output_count > 3 || desc->input_count != desc->output_count + 1) {
+                return invalid("MUL_MAT_MULTI takes n+1 inputs and n outputs (2 <= n <= 3)");
+            }
+            return desc->inputs == nullptr || desc->outputs == nullptr ? invalid("op desc has the wrong input or output count") : SCRAPGPU_STATUS_OK;
         case SCRAPGPU_OP_CONT_MUL_MAT:
-            return desc->input_count > 0 && desc->output_count > 0 ? SCRAPGPU_STATUS_OK : invalid("fused op needs inputs and outputs");
+            // inputs [a (transposed F16 view), x], output [dst]
+            return validate_counts(desc, 2, 1);
     }
     return invalid("unknown op");
 }
@@ -169,11 +188,32 @@ scrapgpu_status scrapgpu_op_supported(scrapgpu_device_t * device, const scrapgpu
         }
         return SCRAPGPU_STATUS_UNSUPPORTED;
     }
-    scrapgpu_set_last_error("no backend registered for op support query");
-    if (reason != nullptr) {
-        *reason = scrapgpu_last_error();
+    const scrapgpu_backend_vtable * backend = reinterpret_cast<const scrapgpu_object_header *>(device)->backend;
+    if (backend == nullptr || backend->op_supported == nullptr) {
+        scrapgpu_set_last_error("no backend registered for op support query");
+        if (reason != nullptr) {
+            *reason = scrapgpu_last_error();
+        }
+        return SCRAPGPU_STATUS_UNSUPPORTED;
     }
-    return SCRAPGPU_STATUS_UNSUPPORTED;
+    return backend->op_supported(device, desc, reason);
+}
+
+scrapgpu_status scrapgpu_op_execute(scrapgpu_stream_t * stream, const scrapgpu_op_desc * desc) {
+    if (stream == nullptr || desc == nullptr) {
+        scrapgpu_set_last_error("stream or op desc is null");
+        return SCRAPGPU_STATUS_INVALID_ARGUMENT;
+    }
+    const scrapgpu_backend_vtable * backend = reinterpret_cast<const scrapgpu_object_header *>(stream)->backend;
+    if (backend == nullptr) {
+        scrapgpu_set_last_error("stream does not belong to a registered backend");
+        return SCRAPGPU_STATUS_INVALID_ARGUMENT;
+    }
+    if (backend->op_execute == nullptr) {
+        scrapgpu_set_last_error("the stream backend cannot execute ops");
+        return SCRAPGPU_STATUS_UNSUPPORTED;
+    }
+    return backend->op_execute(stream, desc);
 }
 
 }

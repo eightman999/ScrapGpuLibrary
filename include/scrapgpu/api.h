@@ -17,7 +17,7 @@
 #endif
 
 #define SCRAPGPU_ABI_VERSION_MAJOR 0u
-#define SCRAPGPU_ABI_VERSION_MINOR 2u
+#define SCRAPGPU_ABI_VERSION_MINOR 3u
 
 #ifdef __cplusplus
 extern "C" {

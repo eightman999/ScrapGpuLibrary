@@ -187,6 +187,12 @@ typedef struct scrapgpu_op_desc {
 SCRAPGPU_API scrapgpu_status scrapgpu_op_desc_validate(const scrapgpu_op_desc * desc);
 SCRAPGPU_API scrapgpu_status scrapgpu_op_supported(scrapgpu_device_t * device, const scrapgpu_op_desc * desc, const char ** reason);
 
+// Executes a single op on the stream's device (a one-node plan). The tensor descs carry the device
+// buffers in scrapgpu_tensor_desc::buffer; every tensor must live in a buffer of the stream's
+// device. The work is enqueued asynchronously; results are visible to host reads
+// (scrapgpu_tensor_download / scrapgpu_buffer_read, blocking) and after scrapgpu_stream_sync.
+SCRAPGPU_API scrapgpu_status scrapgpu_op_execute(scrapgpu_stream_t * stream, const scrapgpu_op_desc * desc);
+
 #ifdef __cplusplus
 }
 #endif

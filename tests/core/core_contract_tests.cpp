@@ -156,14 +156,28 @@ int main() {
     CHECK(scrapgpu_tensor_row_size(SCRAPGPU_DTYPE_Q4_K, 512) == 288);
     CHECK(scrapgpu_tensor_row_size(SCRAPGPU_DTYPE_Q6_K, 512) == 420);
 
+    // scrapgpu_tensor_r32_eligible is the same rule the CL11 backend applies: a repackable dtype,
+    // contiguous in the ggml sense, and a single slice or 16-byte aligned slice strides
     scrapgpu_tensor_desc r32 = tensor(SCRAPGPU_DTYPE_Q4_0, 32, 16, 1, 1);
     CHECK(scrapgpu_tensor_is_contiguous(&r32) == 1);
     CHECK(scrapgpu_tensor_r32_eligible(&r32) == 1);
-    r32.nb[2] += 8;
+    r32.nb[2] += 8; // a dim of size 1: the strict contiguity fails, the relaxed one holds, and a single slice needs no stride alignment
     CHECK(scrapgpu_tensor_is_contiguous(&r32) == 0);
-    CHECK(scrapgpu_tensor_r32_eligible(&r32) == 0);
-    r32 = tensor(SCRAPGPU_DTYPE_Q4_0, 32, 3, 1, 1);
+    CHECK(scrapgpu_tensor_r32_eligible(&r32) == 1);
+    r32 = tensor(SCRAPGPU_DTYPE_Q4_0, 32, 3, 1, 1); // a single slice is eligible whatever nb[2] is
     CHECK((r32.nb[2] % 16u) != 0u);
+    CHECK(scrapgpu_tensor_r32_eligible(&r32) == 1);
+    r32 = tensor(SCRAPGPU_DTYPE_Q4_0, 32, 3, 2, 1); // several slices: nb[2] must stay a multiple of 16
+    CHECK((r32.nb[2] % 16u) != 0u);
+    CHECK(scrapgpu_tensor_r32_eligible(&r32) == 0);
+    r32 = tensor(SCRAPGPU_DTYPE_Q4_0, 32, 16, 2, 1);
+    CHECK(scrapgpu_tensor_r32_eligible(&r32) == 1);
+    r32 = tensor(SCRAPGPU_DTYPE_Q8_0, 32, 16, 2, 1); // nb[2] = 34*16 = 544 % 16 == 0
+    CHECK(scrapgpu_tensor_r32_eligible(&r32) == 1);
+    r32 = tensor(SCRAPGPU_DTYPE_F32, 32, 16, 1, 1); // not a repackable dtype
+    CHECK(scrapgpu_tensor_r32_eligible(&r32) == 0);
+    r32 = tensor(SCRAPGPU_DTYPE_Q4_0, 32, 16, 1, 1);
+    r32.nb[1] += 16; // not contiguous in either sense
     CHECK(scrapgpu_tensor_r32_eligible(&r32) == 0);
 
     test_op_validation();

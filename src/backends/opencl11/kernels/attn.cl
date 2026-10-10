@@ -116,7 +116,8 @@ kernel void k_mvq_f16(global uchar * pa, tdesc ta, global uchar * pb, tdesc tb, 
 // <= WG_ATT, K = ne0 % 8 == 0, 16-byte aligned rows, x with contiguous elements.
 // One work-group per batch: lane l (< LANES) reads the 16 bytes l of a row of A (all the heads of a position: the 2 KiB of the row in
 // one instruction) = 8 consecutive outputs of the head h = l / (ne1 / 8), for the r2 vectors x of the head, ATT_JP of them at a time;
-// the S = WG_ATT / LANES slices of the positions (slice s: [s * K / S, (s + 1) * K / S)) are added through local memory.
+// the S = WG_ATT / LANES slices of the positions (slice s: [s * kper, (s + 1) * kper), kper = ceil(K / S) rounded up to 8) are added
+// through local memory.
 // Two rows at a time (more loads in flight at once are slower on a GT 710: DRAM page conflicts).
 // ---------------------------------------------------------------------------------------------
 kernel void k_mvt_f16(global uchar * pa, tdesc ta, global uchar * pb, tdesc tb, global uchar * pc, tdesc tc, bcast bc) {
@@ -134,7 +135,7 @@ kernel void k_mvt_f16(global uchar * pa, tdesc ta, global uchar * pb, tdesc tb, 
     const int h = l / C;
     const int c = l - h * C;
     const int K = ta.ne0;
-    const int kper = ((K / S + 7) >> 3) << 3;            // positions per slice (multiple of 8)
+    const int kper = (((K + S - 1) / S + 7) >> 3) << 3;  // positions per slice (multiple of 8, the S slices cover K)
     const int k0 = act ? min(s * kper, K) : K;
     const int k1 = act ? min(k0 + kper, K) : K;
     global const uchar * a = pa + ta.off + i03 * ta.nb3 + l * 16;
