@@ -1,0 +1,53 @@
+#version 450
+
+// RMS_NORM on F32 rows: one workgroup per row, shared-memory reduction over the row length.
+// Ported from ggml-vulkan (MIT License, Copyright (c) 2023-2026 The ggml authors), see THIRD_PARTY_NOTICES.md
+// (rms_norm.comp: per-workgroup partial sums in shared memory, then inversesqrt scale).
+
+
+#define BLOCK 128
+layout(local_size_x = BLOCK, local_size_y = 1, local_size_z = 1) in;
+
+layout(binding = 0) readonly buffer A { float data_a[]; };
+// binding 2: the host binds (a, a, dst) like the other single-input ops
+layout(binding = 2) writeonly buffer D { float data_d[]; };
+
+// offsets and strides in float elements; ne* are element counts
+layout(push_constant) uniform Params {
+    uint ne00;           // row length
+    uint ne01, ne02;     // rows = ne01*ne02*ne03 (ne03 folded into the flat row index)
+    float eps;
+    uint a_off, a_nb0, a_nb1, a_nb2, a_nb3;
+    uint d_off, d_nb0, d_nb1, d_nb2, d_nb3;
+} p;
+
+shared float sumsh[BLOCK];
+
+void main() {
+    const uint row = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
+    const uint tid = gl_LocalInvocationID.x;
+    uint r = row;
+    const uint i1 = r % p.ne01; r /= p.ne01;
+    const uint i2 = r % p.ne02;
+    const uint i3 = r / p.ne02;
+    const uint ab = p.a_off + i1*p.a_nb1 + i2*p.a_nb2 + i3*p.a_nb3;
+    const uint db = p.d_off + i1*p.d_nb1 + i2*p.d_nb2 + i3*p.d_nb3;
+
+    float sum = 0.0f;
+    for (uint col = tid; col < p.ne00; col += BLOCK) {
+        const float v = data_a[ab + col * p.a_nb0];
+        sum += v * v;
+    }
+    sumsh[tid] = sum;
+    barrier();
+    for (uint s = BLOCK / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            sumsh[tid] += sumsh[tid + s];
+        }
+        barrier();
+    }
+    const float scale = inversesqrt(sumsh[0] / float(p.ne00) + p.eps);
+    for (uint col = tid; col < p.ne00; col += BLOCK) {
+        data_d[db + col * p.d_nb0] = data_a[ab + col * p.a_nb0] * scale;
+    }
+}

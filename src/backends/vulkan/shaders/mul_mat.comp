@@ -1,0 +1,85 @@
+#version 450
+
+// MUL_MAT with a multi-column src1 (mat-mat): 8x8 threads per workgroup compute an 8x8 tile of dst,
+// each thread runs a scalar k loop with per-element dequantization. Correctness first; the tiled
+// shared-memory variants of ggml-vulkan (mul_mm.comp) come later.
+// Ported from ggml-vulkan (MIT License, Copyright (c) 2023-2026 The ggml authors), see THIRD_PARTY_NOTICES.md
+// (types.glsl: the natural block layouts of Q4_0/Q8_0 and their dequantization).
+
+#if defined(DATA_A_F16) || defined(DATA_A_Q4_0) || defined(DATA_A_Q8_0)
+#extension GL_EXT_shader_16bit_storage : require
+#endif
+
+#define TILE 8
+layout(local_size_x = TILE, local_size_y = TILE, local_size_z = 1) in;
+
+#if defined(DATA_A_F32)
+layout(binding = 0) readonly buffer A { float data_a[]; };      // elements
+#else
+layout(binding = 0) readonly buffer A16 { uint16_t data_a[]; }; // 16-bit units
+#endif
+layout(binding = 1) readonly buffer B { float data_b[]; };
+layout(binding = 2) writeonly buffer D { float data_d[]; };
+
+// a_* in storage units (floats for F32, uint16 otherwise), b_* and d_* in floats
+layout(push_constant) uniform Params {
+    uint ncols;                           // K elements (a multiple of the block size for quant)
+    uint m_rows;                          // dst.ne[0] = src0.ne[1]
+    uint n_cols;                          // dst.ne[1] = src1.ne[1]
+    uint tiles_x;                         // ceil(m_rows / TILE): flat tile index decomposition
+    uint a_off, a_nb1, a_nb2, a_nb3;
+    uint b_off, b_nb1, b_nb2, b_nb3;
+    uint d_off, d_nb1, d_nb2, d_nb3;
+    uint r2, r3;                          // broadcast factors src1.ne[23] / src0.ne[23]
+    uint ne12;
+} p;
+
+#if !defined(DATA_A_F32)
+// the 16-bit storage extension allows uint16_t only in buffers: convert at the load
+float f16_to_f32(uint v) { return unpackHalf2x16(v).x; }
+#endif
+
+// the dequantized element k of the src0 row starting at storage unit a_row
+float a_elem(uint a_row, uint k) {
+#if defined(DATA_A_F32)
+    return data_a[a_row + k];
+#elif defined(DATA_A_F16)
+    return f16_to_f32(uint(data_a[a_row + k]));
+#elif defined(DATA_A_Q4_0)
+    const uint ib = a_row + (k >> 5) * 9u;       // 18 bytes = 9 uint16
+    const uint e  = k & 31u;
+    const uint j  = e & 15u;
+    const uint w  = uint(data_a[ib + 1u + (j >> 1)]);
+    const uint qb = (w >> (8u * (j & 1u))) & 0xFFu;
+    const float n = float(e < 16u ? qb & 0xFu : qb >> 4) - 8.0f;
+    return n * f16_to_f32(uint(data_a[ib]));
+#elif defined(DATA_A_Q8_0)
+    const uint ib = a_row + (k >> 5) * 17u;      // 34 bytes = 17 uint16
+    const uint e  = k & 31u;
+    const uint w  = uint(data_a[ib + 1u + (e >> 1)]);
+    const int  qb = int(((w >> (8u * (e & 1u))) & 0xFFu) ^ 0x80u) - 128;
+    return float(qb) * f16_to_f32(uint(data_a[ib]));
+#endif
+}
+
+void main() {
+    const uint tile = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
+    const uint m = (tile % p.tiles_x) * TILE + gl_LocalInvocationID.x;
+    const uint n = (tile / p.tiles_x) * TILE + gl_LocalInvocationID.y;
+    if (m >= p.m_rows || n >= p.n_cols) {
+        return;
+    }
+    const uint batch = gl_WorkGroupID.z;
+    const uint i12 = batch % p.ne12;
+    const uint i13 = batch / p.ne12;
+    const uint i02 = i12 / p.r2;
+    const uint i03 = i13 / p.r3;
+    const uint a_row = p.a_off + m * p.a_nb1 + i02 * p.a_nb2 + i03 * p.a_nb3;
+    const uint b_col = p.b_off + n * p.b_nb1 + i12 * p.b_nb2 + i13 * p.b_nb3;
+
+    float acc = 0.0f;
+    for (uint k = 0; k < p.ncols; ++k) {
+        acc += a_elem(a_row, k) * data_b[b_col + k];
+    }
+    data_d[p.d_off + m + n * p.d_nb1 + i12 * p.d_nb2 + i13 * p.d_nb3] = acc;
+}

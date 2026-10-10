@@ -1,16 +1,23 @@
-// GPU tests of the ops through the public C API only: every op the opencl11 backend reports as
+// GPU tests of the ops through the public C API only: every op the selected backend reports as
 // supported is run on the device and compared against the CPU reference (scrapgpu_ref_execute).
-// Exit code 77 (ctest SKIP_RETURN_CODE) when no OpenCL device exists.
+// The backend is selected with SCRAPGPU_TEST_BACKEND=opencl11|vulkan (default opencl11).
+// Exit code 77 (ctest SKIP_RETURN_CODE) when no device of the backend exists.
 
 #include "scrapgpu/api.h"
 #include "scrapgpu/buffer.h"
 #include "scrapgpu/device.h"
-#include "scrapgpu/opencl11.h"
 #include "scrapgpu/op.h"
 #include "scrapgpu/reference.h"
 #include "scrapgpu/status.h"
 #include "scrapgpu/stream.h"
 #include "scrapgpu/tensor.h"
+
+#if defined(SCRAPGPU_OPS_TEST_WITH_OPENCL11)
+#include "scrapgpu/opencl11.h"
+#endif
+#if defined(SCRAPGPU_OPS_TEST_WITH_VULKAN)
+#include "scrapgpu/vulkan.h"
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -137,6 +144,9 @@ int64_t tn(const scrapgpu_tensor_desc & t) {
 scrapgpu_device_t * g_dev = nullptr;
 scrapgpu_stream_t * g_stream = nullptr;
 std::vector<scrapgpu_buffer_t *> g_buffers;
+// the layout of quantized weight tensors on the selected backend: R32 for opencl11 (the repacked
+// layout), the natural GGUF block layout for vulkan
+scrapgpu_layout g_weight_layout = SCRAPGPU_LAYOUT_R32;
 
 scrapgpu_buffer_t * g_alloc(size_t bytes) {
     scrapgpu_buffer_t * buf = nullptr;
@@ -577,7 +587,7 @@ void test_get_rows() {
     }
     for (scrapgpu_dtype qt : {SCRAPGPU_DTYPE_Q4_0, SCRAPGPU_DTYPE_Q8_0, SCRAPGPU_DTYPE_Q4_K, SCRAPGPU_DTYPE_Q6_K}) {
         const int64_t k = qt == SCRAPGPU_DTYPE_Q4_K || qt == SCRAPGPU_DTYPE_Q6_K ? 256 : 64;
-        TT s0 = tmake(tdesc(qt, k, 32), SCRAPGPU_LAYOUT_R32);
+        TT s0 = tmake(tdesc(qt, k, 32), g_weight_layout);
         tquantize(s0, frand_vec(tn(s0.rdesc)));
         char name[48];
         snprintf(name, sizeof(name), "GET_ROWS %s r32",
@@ -696,7 +706,7 @@ void test_mul_mat() {
     for (scrapgpu_dtype qt : {SCRAPGPU_DTYPE_Q4_0, SCRAPGPU_DTYPE_Q8_0, SCRAPGPU_DTYPE_Q4_K, SCRAPGPU_DTYPE_Q6_K}) {
         const int64_t k = qt == SCRAPGPU_DTYPE_Q4_K || qt == SCRAPGPU_DTYPE_Q6_K ? 256 : 96;
         for (int64_t cols : {1, 4}) {
-            TT s0 = tmake(tdesc(qt, k, 24), SCRAPGPU_LAYOUT_R32);
+            TT s0 = tmake(tdesc(qt, k, 24), g_weight_layout);
             tquantize(s0, frand_vec(tn(s0.rdesc)));
             TT x = tmake(tdesc(SCRAPGPU_DTYPE_F32, k, cols));
             tfill(x, frand_vec(tn(x.rdesc)));
@@ -735,7 +745,7 @@ void test_mul_mat_multi() {
     for (int n : {2, 3}) {
         std::vector<TT> ins, outs;
         for (int i = 0; i < n; ++i) {
-            TT w = tmake(tdesc(SCRAPGPU_DTYPE_Q4_0, 96, 8), SCRAPGPU_LAYOUT_R32);
+            TT w = tmake(tdesc(SCRAPGPU_DTYPE_Q4_0, 96, 8), g_weight_layout);
             tquantize(w, frand_vec(tn(w.rdesc)));
             ins.push_back(w);
         }
@@ -765,7 +775,7 @@ void test_mul_mat_id() {
     for (scrapgpu_dtype qt : {SCRAPGPU_DTYPE_Q4_0, SCRAPGPU_DTYPE_Q4_K}) {
         const int64_t k = qt == SCRAPGPU_DTYPE_Q4_0 ? 96 : 256;
         const int64_t m = 8, e = 4, used = 2, tok = 3;
-        TT s0 = tmake(tdesc(qt, k, m, e), SCRAPGPU_LAYOUT_R32);
+        TT s0 = tmake(tdesc(qt, k, m, e), g_weight_layout);
         tquantize(s0, frand_vec(tn(s0.rdesc)));
         TT x = tmake(tdesc(SCRAPGPU_DTYPE_F32, k, used, tok));
         tfill(x, frand_vec(tn(x.rdesc)));
@@ -1040,12 +1050,37 @@ void test_buffer_ops() {
 } // namespace
 
 int main() {
-    if (scrapgpu_opencl11_register() != SCRAPGPU_STATUS_OK) {
-        std::fprintf(stderr, "scrapgpu_opencl11_register failed: %s\n", scrapgpu_last_error());
+    const char * backend = std::getenv("SCRAPGPU_TEST_BACKEND");
+    if (backend == nullptr || backend[0] == '\0') {
+        backend = "opencl11";
+    }
+    if (std::strcmp(backend, "opencl11") == 0) {
+#if defined(SCRAPGPU_OPS_TEST_WITH_OPENCL11)
+        if (scrapgpu_opencl11_register() != SCRAPGPU_STATUS_OK) {
+            std::fprintf(stderr, "scrapgpu_opencl11_register failed: %s\n", scrapgpu_last_error());
+            return 1;
+        }
+#else
+        std::printf("SKIP: built without the OpenCL 1.1 backend\n");
+        return 77;
+#endif
+    } else if (std::strcmp(backend, "vulkan") == 0) {
+#if defined(SCRAPGPU_OPS_TEST_WITH_VULKAN)
+        if (scrapgpu_vulkan_register() != SCRAPGPU_STATUS_OK) {
+            std::fprintf(stderr, "scrapgpu_vulkan_register failed: %s\n", scrapgpu_last_error());
+            return 1;
+        }
+        g_weight_layout = SCRAPGPU_LAYOUT_NATURAL;
+#else
+        std::printf("SKIP: built without the Vulkan backend\n");
+        return 77;
+#endif
+    } else {
+        std::fprintf(stderr, "unknown SCRAPGPU_TEST_BACKEND '%s'\n", backend);
         return 1;
     }
     if (scrapgpu_get_device_count() == 0) {
-        std::printf("SKIP: no OpenCL device\n");
+        std::printf("SKIP: no %s device\n", backend);
         return 77;
     }
     CHECK_OK(scrapgpu_get_device(0, &g_dev));
