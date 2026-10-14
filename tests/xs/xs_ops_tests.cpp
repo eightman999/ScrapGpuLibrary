@@ -151,7 +151,8 @@ static void gdn_step() {
     // In-place state must agree with the reference out-of-place result.
     std::vector<float> state2 = next;
     std::vector<float> gate2(4, std::log(0.5f));
-    auto ins2 = ins;
+    scrapgpu_tensor_desc ins2[6];
+    std::memcpy(ins2, ins, sizeof(ins));
     ins2[0] = cpu.upload(base[0], state2);
     ins2[4] = cpu.upload(base[4], gate2);
     outputs[0] = ins2[0]; // exact alias is permitted for state only
