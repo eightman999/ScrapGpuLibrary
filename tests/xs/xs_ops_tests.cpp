@@ -161,6 +161,16 @@ static void gdn_step() {
     std::vector<float> want_state(16), want_y(8);
     void * ref2[2] = {want_state.data(), want_y.data()};
     ref(d, host2, ref2);
+    // Analytic nonzero-state oracle: the old state equals v*beta on the
+    // selected key column, so decay=1/2 gives v*beta*(3/2-beta/2).
+    for (int64_t h = 0; h < 4; ++h) {
+        for (int64_t j = 0; j < 2; ++j) {
+            const float expected = v[h * 2 + j] * beta[h] * (1.5f - 0.5f * beta[h]);
+            near(want_y[h * 2 + j], expected);
+            for (int64_t i = 0; i < 2; ++i)
+                near(want_state[(i * 4 + h) * 2 + j], (i == h % 2) ? expected : 0.0f);
+        }
+    }
     cpu.run(d);
     const auto got2 = cpu.read<float>(outputs[0], 16);
     const auto got2y = cpu.read<float>(outputs[1], 8);
