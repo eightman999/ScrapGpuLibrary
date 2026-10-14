@@ -859,8 +859,8 @@ scrapgpu_status api_supports(cpu_api_device * d, const scrapgpu_op_desc * desc, 
         case SCRAPGPU_OP_GDN_L2_NORM: {
             const auto p = api_params<scrapgpu_rms_norm_params>(desc);
             if (!f32(s0) || !f32(dd)) return api_no("GDN_L2_NORM expects F32 tensors", reason);
-            if (!std::isfinite(p.eps) || p.eps < 0.0f)
-                return api_bad("GDN_L2_NORM eps must be nonnegative and finite", reason);
+            if (!std::isfinite(p.eps) || p.eps <= 0.0f)
+                return api_bad("GDN_L2_NORM eps must be positive and finite", reason);
             return td_same_ne(s0, dd) ? SCRAPGPU_STATUS_OK
                 : api_bad("GDN_L2_NORM output shape must match input", reason);
         }
@@ -953,6 +953,7 @@ bool api_op_alias_safe(scrapgpu_op op) {
         case SCRAPGPU_OP_UNARY:
         case SCRAPGPU_OP_GLU:
         case SCRAPGPU_OP_RMS_NORM:
+        case SCRAPGPU_OP_GDN_L2_NORM:
         case SCRAPGPU_OP_SOFT_MAX:
         case SCRAPGPU_OP_RMS_NORM_MUL:
         case SCRAPGPU_OP_ADD_RMS_NORM_MUL:
