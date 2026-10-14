@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <utility>
 #include <vector>
 
 static bool cl11_backend_debug() {
@@ -423,7 +424,67 @@ bool cl11_platform_selected(const std::string & name) {
     return cl11_env_list_selected("GGML_CL11_PLATFORMS", "SCRAPGPU_OPENCL11_PLATFORMS", name);
 }
 
+// The NVIDIA 390 driver cannot open a Fermi (cc 2.x) and a Kepler (cc 3.x) GPU in one process: the context created second fails with
+// CL_INVALID_DEVICE, whatever the order (docs/MULTI_GPU.md). Only when the candidates of one platform are NVIDIA GPUs of more than one
+// compute capability major, every such device gets a context of its own, all open at once, in the order of the enumeration; a device whose
+// context cannot be created next to the ones that were created before it is dropped with a warning. Single devices, a single generation
+// and other vendors cost nothing. GGML_CL11_NO_CONFLICT_CHECK=1 turns the check off.
+// `ok` is returned per candidate; the test contexts are released before returning.
+static void cl11_filter_open_conflicts(const std::vector<std::pair<cl11_device_info, bool>> & cands, std::vector<bool> & ok) {
+    const char * off = getenv("GGML_CL11_NO_CONFLICT_CHECK");
+    if (off != nullptr && *off != '\0' && *off != '0') {
+        return;
+    }
+    std::vector<cl_platform_id> done;
+    for (const auto & c : cands) {
+        const cl_platform_id plat = c.first.platform;
+        if (std::find(done.begin(), done.end(), plat) != done.end()) {
+            continue;
+        }
+        done.push_back(plat);
+
+        std::vector<size_t> idx;
+        int cc_min = 0, cc_max = 0;
+        for (size_t i = 0; i < cands.size(); i++) {
+            const cl11_device_info & in = cands[i].first;
+            if (in.platform != plat || in.nv_cc_major <= 0) {
+                continue;
+            }
+            idx.push_back(i);
+            cc_min = cc_min == 0 ? in.nv_cc_major : std::min(cc_min, in.nv_cc_major);
+            cc_max = std::max(cc_max, in.nv_cc_major);
+        }
+        if (idx.size() < 2 || cc_min == cc_max) {
+            continue;
+        }
+
+        std::vector<cl_context> ctxs;
+        std::string kept;
+        for (size_t i : idx) {
+            const cl11_device_info & in = cands[i].first;
+            cl_int err = CL_SUCCESS;
+            const cl_context_properties props[] = { CL_CONTEXT_PLATFORM, (cl_context_properties) in.platform, 0 };
+            cl_context ctx = clCreateContext(props, 1, &in.device, nullptr, nullptr, &err);
+            if (err == CL_SUCCESS && ctx != nullptr) {
+                ctxs.push_back(ctx);
+                kept = kept.empty() ? in.name : kept;
+                continue;
+            }
+            ok[i] = false;
+            fprintf(stderr, "%s: skipping '%s' (cc %d.%d): it cannot be opened in the same process as '%s' (clCreateContext: %s); "
+                            "the NVIDIA driver does not mix GPU generations. Select the devices with GGML_CL11_DEVICES, or run the "
+                            "device in another process (the remote backend / scrapgpu-device-server, or llama.cpp RPC). "
+                            "GGML_CL11_NO_CONFLICT_CHECK=1 disables this check.\n",
+                    __func__, in.name.c_str(), in.nv_cc_major, in.nv_cc_minor, kept.c_str(), cl11_err_str(err));
+        }
+        for (cl_context ctx : ctxs) {
+            clReleaseContext(ctx);
+        }
+    }
+}
+
 bool cl11_probe_device_infos(void (*emit)(const cl11_device_info & info, bool strict_alloc)) {
+    std::vector<std::pair<cl11_device_info, bool>> cands;
     cl_uint n_platforms = 0;
     cl_int err = clGetPlatformIDs(0, nullptr, &n_platforms);
     if (err != CL_SUCCESS || n_platforms == 0) {
@@ -513,7 +574,14 @@ bool cl11_probe_device_infos(void (*emit)(const cl11_device_info & info, bool st
                 fprintf(stderr, "%s: skipping '%s': %s\n", __func__, info.name.c_str(), reason);
                 continue;
             }
-            emit(info, cl11_tuning_for(info).strict_alloc);
+            cands.emplace_back(info, cl11_tuning_for(info).strict_alloc);
+        }
+    }
+    std::vector<bool> ok(cands.size(), true);
+    cl11_filter_open_conflicts(cands, ok);
+    for (size_t i = 0; i < cands.size(); i++) {
+        if (ok[i]) {
+            emit(cands[i].first, cands[i].second);
         }
     }
     return true;

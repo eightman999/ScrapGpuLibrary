@@ -11,6 +11,7 @@ TB250 の 5 枚の GPU を、1 つのモデルや 1 つの計算に組み合わ�
 | Fermi（GT 430）と Kepler | 使えない。後から開いた方の `clCreateContext` が `CL_INVALID_DEVICE`（NVIDIA 390、順番によらない） |
 | AMD の rusticl と Clover | 同じ Radeon が両方に現れる。RX 6400 を Clover で開くと GPU がリセットされる |
 
+- 列挙の段階で Fermi と Kepler の衝突を検出する。同じプラットフォームの NVIDIA GPU に compute capability の major が複数あるときだけ、各デバイスのコンテキストを列挙順に同時に開いて確かめ、先に開けたものを残して、開けなかった方を警告付きで外す（警告に `GGML_CL11_DEVICES` での選び直しと、`remote` バックエンド / llama.cpp RPC で別プロセスにする案内を含む）。デバイスが 1 枚、世代が 1 つ、NVIDIA 以外ではコストは増えない。`GGML_CL11_NO_CONFLICT_CHECK=1` で無効にできる。
 - GT 730・GT 710・RX 6400・WX 2100 の 4 枚（VRAM 合計 約 9GB）を 1 プロセスで使える。`GGML_CL11_PLATFORMS=NVIDIA,rusticl RUSTICL_ENABLE=radeonsi` でプラットフォームを絞り、`GGML_CL11_DEVICES` で GT 430 を外す。
 - GT 430 は `remote` バックエンド（`SCRAPGPU_BUILD_REMOTE`、下の「別プロセスの device」）で加えられる。device サーバーが別プロセスで GT 430 だけを開き、呼び出しは Unix ソケット＋共有メモリで転送される。
 

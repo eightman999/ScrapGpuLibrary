@@ -15,5 +15,7 @@ int main() {
     CHECK(cl11_device_rejection_reason(info) == nullptr);
     info.platform_name = "Clover"; info.name = "unknown GPU";
     CHECK(cl11_device_rejection_reason(info) == nullptr);
+    // the conflict check opens nothing without NVIDIA GPUs of two generations: the probe must not fail whatever the host has
+    CHECK(cl11_probe_device_infos([](const cl11_device_info &, bool) {}));
     std::puts("device policy tests passed");
 }
