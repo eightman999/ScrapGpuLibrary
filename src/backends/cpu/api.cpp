@@ -11,8 +11,8 @@
 //
 // Aliasing: the reference computes on host pointers, so an output must not overlap an input
 // unless the op is elementwise (every element is read before it is written) *and* the overlapping
-// tensor is the identical view: the same buffer, offset, dtype, shape and strides. Outputs must
-// never overlap each other.
+// tensor is the identical view, or it is a documented XS state update (only output 0 / input 0).
+// Outputs must never overlap each other.
 //
 // The descriptor math below (nbytes / span / contiguity) mirrors sgt:: (src/tensor/tensor.h) and
 // the reference's tensor_span_ok so that this file only needs the public headers of scrapgpu_core.
@@ -391,7 +391,7 @@ scrapgpu_status api_bad(const char * why, const char ** reason) {
 
 // mirrors the descriptor checks of scrapgpu_ref_execute, without touching tensor data: a desc that
 // is supported here can still fail at execute time only on index *values* (GET_ROWS / SET_ROWS /
-// MUL_MAT_ID ids), which the backend cannot see
+// MUL_MAT_ID ids / QSA_STEP position), which the backend cannot see
 scrapgpu_status api_supports(cpu_api_device * d, const scrapgpu_op_desc * desc, const char ** reason) {
     (void) d;
     const char * reason_local = nullptr;
@@ -846,7 +846,7 @@ scrapgpu_status api_supports(cpu_api_device * d, const scrapgpu_op_desc * desc, 
             if (s0.dtype != SCRAPGPU_DTYPE_I32 || dd.dtype != SCRAPGPU_DTYPE_I32)
                 return api_no("QSA_STEP uses I32 tensors", reason);
             if (p.idx_block == 0 || p.idx_top_k == 0 ||
-                (uint64_t) p.idx_top_k + p.idx_block - 1 > (uint64_t) INT32_MAX)
+                (uint64_t) p.idx_top_k + p.idx_block - 1 > (uint64_t) std::numeric_limits<int32_t>::max())
                 return api_bad("QSA_STEP requires positive idx_block and idx_top_k with an I32 selection width", reason);
             for (int i = 1; i < 4; ++i) {
                 if (td_ne(s0, i) != 1 || td_ne(dd, i) != 1)
