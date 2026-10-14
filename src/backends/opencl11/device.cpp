@@ -430,7 +430,8 @@ bool cl11_platform_selected(const std::string & name) {
 // context cannot be created next to the ones that were created before it is dropped with a warning. Single devices, a single generation
 // and other vendors cost nothing. GGML_CL11_NO_CONFLICT_CHECK=1 turns the check off.
 // `ok` is returned per candidate; the test contexts are released before returning.
-static void cl11_filter_open_conflicts(const std::vector<std::pair<cl11_device_info, bool>> & cands, std::vector<bool> & ok) {
+static void cl11_filter_open_conflicts(const std::vector<std::pair<cl11_device_info, bool>> & cands, std::vector<bool> & ok,
+                                       void (*dropped)(const cl11_device_info &)) {
     const char * off = getenv("GGML_CL11_NO_CONFLICT_CHECK");
     if (off != nullptr && *off != '\0' && *off != '0') {
         return;
@@ -476,6 +477,9 @@ static void cl11_filter_open_conflicts(const std::vector<std::pair<cl11_device_i
                             "device in another process (the remote backend / scrapgpu-device-server, or llama.cpp RPC). "
                             "GGML_CL11_NO_CONFLICT_CHECK=1 disables this check.\n",
                     __func__, in.name.c_str(), in.nv_cc_major, in.nv_cc_minor, kept.c_str(), cl11_err_str(err));
+            if (dropped) {
+                dropped(in);
+            }
         }
         for (cl_context ctx : ctxs) {
             clReleaseContext(ctx);
@@ -483,7 +487,8 @@ static void cl11_filter_open_conflicts(const std::vector<std::pair<cl11_device_i
     }
 }
 
-bool cl11_probe_device_infos(void (*emit)(const cl11_device_info & info, bool strict_alloc)) {
+bool cl11_probe_device_infos(void (*emit)(const cl11_device_info & info, bool strict_alloc),
+                             void (*dropped)(const cl11_device_info & info)) {
     std::vector<std::pair<cl11_device_info, bool>> cands;
     cl_uint n_platforms = 0;
     cl_int err = clGetPlatformIDs(0, nullptr, &n_platforms);
@@ -578,7 +583,7 @@ bool cl11_probe_device_infos(void (*emit)(const cl11_device_info & info, bool st
         }
     }
     std::vector<bool> ok(cands.size(), true);
-    cl11_filter_open_conflicts(cands, ok);
+    cl11_filter_open_conflicts(cands, ok, dropped);
     for (size_t i = 0; i < cands.size(); i++) {
         if (ok[i]) {
             emit(cands[i].first, cands[i].second);

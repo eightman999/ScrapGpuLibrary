@@ -126,6 +126,9 @@ bool cl11_mmx_parse(const std::string & spec_in, cl11_mmx & m);
 bool cl11_mmx_valid(const cl11_mmx & m, size_t local_mem, size_t max_wg, std::string & why);
 bool cl11_device_selected(const std::string & name);
 bool cl11_platform_selected(const std::string & name);
-bool cl11_probe_device_infos(void (*emit)(const cl11_device_info & info, bool strict_alloc));
+// `dropped` (optional) is called for each device that cannot be opened next to an earlier one (the NVIDIA 390 Fermi / Kepler conflict),
+// so that the caller can serve it from another process. Without it the device is only dropped with a warning.
+bool cl11_probe_device_infos(void (*emit)(const cl11_device_info & info, bool strict_alloc),
+                             void (*dropped)(const cl11_device_info & info) = nullptr);
 
 #endif

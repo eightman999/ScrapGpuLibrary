@@ -11,9 +11,18 @@ TB250 の 5 枚の GPU を、1 つのモデルや 1 つの計算に組み合わ�
 | Fermi（GT 430）と Kepler | 使えない。後から開いた方の `clCreateContext` が `CL_INVALID_DEVICE`（NVIDIA 390、順番によらない） |
 | AMD の rusticl と Clover | 同じ Radeon が両方に現れる。RX 6400 を Clover で開くと GPU がリセットされる |
 
-- 列挙の段階で Fermi と Kepler の衝突を検出する。同じプラットフォームの NVIDIA GPU に compute capability の major が複数あるときだけ、各デバイスのコンテキストを列挙順に同時に開いて確かめ、先に開けたものを残して、開けなかった方を警告付きで外す（警告に `GGML_CL11_DEVICES` での選び直しと、`remote` バックエンド / llama.cpp RPC で別プロセスにする案内を含む）。デバイスが 1 枚、世代が 1 つ、NVIDIA 以外ではコストは増えない。`GGML_CL11_NO_CONFLICT_CHECK=1` で無効にできる。
+- 列挙の段階で Fermi と Kepler の衝突を検出する。同じプラットフォームの NVIDIA GPU に compute capability の major が複数あるときだけ、各デバイスのコンテキストを列挙順に同時に開いて確かめ、先に開けたものを残して、開けなかった方を警告付きで外す（警告に `GGML_CL11_DEVICES` での選び直しと、`remote` バックエンド / llama.cpp RPC で別プロセスにする案内を含む）。デバイスが 1 枚、世代が 1 つ、NVIDIA 以外ではコストは増えない。`GGML_CL11_NO_CONFLICT_CHECK=1` で無効にできる。外れたデバイスは、ggml プラグインでは自動で別プロセスに回す（下の「自動 RPC」）。
 - GT 730・GT 710・RX 6400・WX 2100 の 4 枚（VRAM 合計 約 9GB）を 1 プロセスで使える。`GGML_CL11_PLATFORMS=NVIDIA,rusticl RUSTICL_ENABLE=radeonsi` でプラットフォームを絞り、`GGML_CL11_DEVICES` で GT 430 を外す。
 - GT 430 は `remote` バックエンド（`SCRAPGPU_BUILD_REMOTE`、下の「別プロセスの device」）で加えられる。device サーバーが別プロセスで GT 430 だけを開き、呼び出しは Unix ソケット＋共有メモリで転送される。
+
+## 自動 RPC（ggml プラグイン、Linux）
+
+プラグインは、列挙で外れたデバイスごとに `ggml-rpc-server` を子プロセスとして起動し（`GGML_BACKEND_PATH`＝プラグイン自身、`GGML_CL11_DEVICES`＝そのデバイス名、`-H 127.0.0.1 -p <空きポート> -d CL11_0 -t 1`）、`ggml_backend_rpc_add_server` で RPC デバイス（`RPC0` など）として登録する。llama.cpp の RPC バックエンド（`libggml-rpc.so`）が先に読み込まれていることが条件。サーバーは `libggml-rpc.so` と同じディレクトリの `ggml-rpc-server`（`GGML_CL11_RPC_SERVER` で上書き）。親の終了で子も終了する（`PR_SET_PDEATHSIG` と `atexit`）。RPC が無い、サーバーが無い、起動に失敗したときは除外＋警告のまま。`GGML_CL11_AUTO_RPC=0` で無効。
+
+- RPC デバイスは `CL11_n` ではなく `RPC0` として、CL11 のデバイスより前に並ぶ（`-ts` はこの順）。
+- **`-fa off` が必須。** RPC デバイスは全 op を対応と答えるので、`FLASH_ATTN_EXT` がサーバーに回り、CL11 のサーバーが assert で落ちる。プラグイン側では避けられない。起動時の警告にも書いてある。
+- 実測（深さ別）：LFM2.5-8B-A1B Q4_0、環境指定なし、5 枚の層分割、`-fa 0 -ub 128`。top-4 のエキスパートで tg32 は深さ 512 で 13.34 t/s、深さ 8192 で 10.92 t/s。実行後に `ps` で `ggml-rpc-server` は残っていない。
+- 実測（TB250、環境指定なし、`RUSTICL_ENABLE=radeonsi GGML_CL11_PLATFORMS=NVIDIA,rusticl`、LFM2.5-8B-A1B Q4_0、`-ts 8,8,18,40,18 -fa off`）：RPC0（GT 430）・GT 730・GT 710・RX 6400・WX 2100 の層分割で完走、pp 6.63 t/s、tg 13.15 t/s（63 トークン）。
 
 ## llama.cpp：Qwen3-8B Q4_K_M（4.68 GiB）
 
