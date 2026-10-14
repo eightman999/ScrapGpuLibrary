@@ -1049,6 +1049,145 @@ scrapgpu_status exec_add_id(const RTensor & s0, const RTensor & s1, const RTenso
     return SCRAPGPU_STATUS_OK;
 }
 
+
+// ---------------------------------------------------------------------------------------------
+// XeStrata / Qwen3.8 decode primitives
+// ---------------------------------------------------------------------------------------------
+
+// Tensor descriptor order is ggml-style (ne0 fastest). XeStrata's in-memory
+// GDN state is [S, Hv, S] where the final S is the contracted i axis.
+// The modulo mapping of value heads to key heads is deliberate.
+scrapgpu_status exec_gdn_step(const RTensor & state, const RTensor & q, const RTensor & k,
+                             const RTensor & v, const RTensor & gate, const RTensor & beta,
+                             const WTensor & next, const WTensor & out) {
+    const int64_t S = state.ne(0), Hv = state.ne(1), Hk = q.ne(1);
+    const auto dims = [](const auto & t, int64_t n0, int64_t n1, int64_t n2) {
+        return t.ne(0) == n0 && t.ne(1) == n1 && t.ne(2) == n2 && t.ne(3) == 1;
+    };
+    const auto positive_dims = [](const auto & t) {
+        for (int i = 0; i < 4; ++i) if (t.desc->ne[i] <= 0) return false;
+        return true;
+    };
+    if (!positive_dims(state) || !positive_dims(q) || !positive_dims(k) || !positive_dims(v) ||
+        !positive_dims(gate) || !positive_dims(beta) || !positive_dims(next) || !positive_dims(out)) {
+        return ref_invalid("GDN_STEP tensor dimensions must be positive");
+    }
+    if (state.dtype() != SCRAPGPU_DTYPE_F32 || q.dtype() != SCRAPGPU_DTYPE_F32 ||
+        k.dtype() != SCRAPGPU_DTYPE_F32 || v.dtype() != SCRAPGPU_DTYPE_F32 ||
+        gate.dtype() != SCRAPGPU_DTYPE_F32 || beta.dtype() != SCRAPGPU_DTYPE_F32 ||
+        next.dtype() != SCRAPGPU_DTYPE_F32 || out.dtype() != SCRAPGPU_DTYPE_F32) {
+        return ref_unsupported("GDN_STEP requires F32 tensors");
+    }
+    if (S <= 0 || Hv <= 0 || Hk <= 0 || Hv % Hk ||
+        !dims(state, S, Hv, S) || !dims(next, S, Hv, S) ||
+        !dims(q, S, Hk, 1) || !dims(k, S, Hk, 1) ||
+        !dims(v, S, Hv, 1) || !dims(out, S, Hv, 1) ||
+        !dims(gate, Hv, 1, 1) || !dims(beta, Hv, 1, 1)) {
+        return ref_invalid("GDN_STEP shape mismatch: state[S,Hv,S], q/k[S,Hk], v/out[S,Hv], gate/beta[Hv]");
+    }
+    for (int64_t h = 0; h < Hv; ++h) {
+        const int64_t source = h % Hk; // modulo, NOT contiguous grouping
+        const float decay = std::exp(ld_f32(gate.ptr(h))); // caller supplies pre-exp gate
+        const float strength = ld_f32(beta.ptr(h));       // caller has already applied sigmoid
+        for (int64_t j = 0; j < S; ++j) {
+            float sk = 0.0f;
+            for (int64_t i = 0; i < S; ++i) {
+                const float st = ld_f32(state.ptr(j, h, i)) * decay;
+                sk += st * ld_f32(k.ptr(i, source));
+            }
+            const float delta = (ld_f32(v.ptr(j, h)) - sk) * strength;
+            float dot = 0.0f;
+            for (int64_t i = 0; i < S; ++i) {
+                const float updated = ld_f32(state.ptr(j, h, i)) * decay +
+                                      ld_f32(k.ptr(i, source)) * delta;
+                st_f32(next.ptr(j, h, i), updated);
+                dot += updated * ld_f32(q.ptr(i, source));
+            }
+            st_f32(out.ptr(j, h), dot); // q is already scaled by 1/sqrt(S)
+        }
+    }
+    return SCRAPGPU_STATUS_OK;
+}
+
+// Fixed four-integer device-side step descriptor used by XeStrata's captured
+// QSA decode path. No step scalar should be frozen into a kernel graph.
+scrapgpu_status exec_qsa_step(const RTensor & position, const WTensor & step,
+                             const scrapgpu_qsa_step_params * p) {
+    if (position.dtype() != SCRAPGPU_DTYPE_I32 || step.dtype() != SCRAPGPU_DTYPE_I32)
+        return ref_unsupported("QSA_STEP requires I32 position and output");
+    if (p->idx_block == 0 || p->idx_top_k == 0 ||
+        static_cast<uint64_t>(p->idx_top_k) + p->idx_block - 1 > INT32_MAX)
+        return ref_invalid("QSA_STEP requires positive block/top_k with an I32 width");
+    if (position.ne(0) != 1 || step.ne(0) != 4)
+        return ref_invalid("QSA_STEP expects input[1] and output[4]");
+    for (int i = 1; i < 4; ++i) {
+        if (position.desc->ne[i] != 1 || step.desc->ne[i] != 1)
+            return ref_invalid("QSA_STEP expects one-dimensional tensors");
+    }
+    const int32_t pos = ld_i32(position.ptr());
+    if (pos < 0 || pos == INT32_MAX)
+        return ref_invalid("QSA_STEP position must be in [0, INT32_MAX-1]");
+    const int32_t n_kv = pos + 1;
+    const int32_t completed_blocks = n_kv / static_cast<int32_t>(p->idx_block);
+    const int32_t width = static_cast<int32_t>(
+        std::min<uint64_t>(n_kv, static_cast<uint64_t>(p->idx_top_k) + p->idx_block - 1));
+    st_i32(step.ptr(0), pos);
+    st_i32(step.ptr(1), n_kv);
+    st_i32(step.ptr(2), completed_blocks);
+    st_i32(step.ptr(3), width);
+    return SCRAPGPU_STATUS_OK;
+}
+
+scrapgpu_status exec_gdn_l2_norm(const RTensor & x, const WTensor & y, float eps) {
+    if (x.dtype() != SCRAPGPU_DTYPE_F32 || y.dtype() != SCRAPGPU_DTYPE_F32)
+        return ref_unsupported("GDN_L2_NORM requires F32 tensors");
+    if (!same_ne(x, y) || !std::isfinite(eps) || eps <= 0.0f)
+        return ref_invalid("GDN_L2_NORM needs matching shapes and finite positive eps");
+    for (int64_t i3 = 0; i3 < x.ne(3); ++i3) {
+        for (int64_t i2 = 0; i2 < x.ne(2); ++i2) {
+            for (int64_t i1 = 0; i1 < x.ne(1); ++i1) {
+                double norm2 = 0.0;
+                for (int64_t i0 = 0; i0 < x.ne(0); ++i0) {
+                    const float v0 = ld_f32(x.ptr(i0, i1, i2, i3));
+                    norm2 += static_cast<double>(v0) * v0;
+                }
+                const float scale = 1.0f / std::sqrt(static_cast<float>(norm2) + eps);
+                for (int64_t i0 = 0; i0 < x.ne(0); ++i0)
+                    st_f32(y.ptr(i0, i1, i2, i3), ld_f32(x.ptr(i0, i1, i2, i3)) * scale);
+            }
+        }
+    }
+    return SCRAPGPU_STATUS_OK;
+}
+
+// Single causal depthwise convolution step. The oldest state sample is tap 0.
+scrapgpu_status exec_gdn_conv_step(const RTensor & state, const RTensor & x, const RTensor & weights,
+                                  const WTensor & next, const WTensor & out) {
+    if (state.dtype() != SCRAPGPU_DTYPE_F32 || x.dtype() != SCRAPGPU_DTYPE_F32 ||
+        weights.dtype() != SCRAPGPU_DTYPE_F32 || next.dtype() != SCRAPGPU_DTYPE_F32 ||
+        out.dtype() != SCRAPGPU_DTYPE_F32)
+        return ref_unsupported("GDN_CONV_STEP requires F32 tensors");
+    const int64_t C = x.ne(0), dc = weights.ne(0);
+    const auto dims = [](const auto & t, int64_t n0, int64_t n1) {
+        return t.ne(0) == n0 && t.ne(1) == n1 && t.ne(2) == 1 && t.ne(3) == 1;
+    };
+    if (dc < 2 || !dims(state, dc - 1, C) || !dims(next, dc - 1, C) ||
+        !dims(weights, dc, C) || !dims(x, C, 1) || !dims(out, C, 1))
+        return ref_invalid("GDN_CONV_STEP needs state[d_conv-1,C], weights[d_conv,C], x/out[C] and d_conv >= 2");
+    for (int64_t c = 0; c < C; ++c) {
+        float sum = 0.0f;
+        for (int64_t t = 0; t + 1 < dc; ++t)
+            sum += ld_f32(state.ptr(t, c)) * ld_f32(weights.ptr(t, c));
+        const float current = ld_f32(x.ptr(c));
+        sum += current * ld_f32(weights.ptr(dc - 1, c));
+        st_f32(out.ptr(c), sum);
+        for (int64_t t = 0; t + 2 < dc; ++t)
+            st_f32(next.ptr(t, c), ld_f32(state.ptr(t + 1, c)));
+        st_f32(next.ptr(dc - 2, c), current);
+    }
+    return SCRAPGPU_STATUS_OK;
+}
+
 // ---------------------------------------------------------------------------------------------
 // misc
 // ---------------------------------------------------------------------------------------------
@@ -1394,6 +1533,21 @@ scrapgpu_status scrapgpu_ref_execute(const scrapgpu_op_desc * desc, void * const
                 return ref_invalid("ADD_ID takes 3 inputs");
             }
             return exec_add_id(input(0), input(1), input(2), output(0));
+        case SCRAPGPU_OP_GDN_STEP:
+            return exec_gdn_step(input(0), input(1), input(2), input(3), input(4), input(5),
+                                 output(0), output(1));
+        case SCRAPGPU_OP_QSA_STEP: {
+            const auto * p = params_as<scrapgpu_qsa_step_params>(desc->params, desc->params_size);
+            if (!p) return ref_invalid("QSA_STEP params missing");
+            return exec_qsa_step(input(0), output(0), p);
+        }
+        case SCRAPGPU_OP_GDN_L2_NORM: {
+            const auto * p = params_as<scrapgpu_rms_norm_params>(desc->params, desc->params_size);
+            if (!p) return ref_invalid("GDN_L2_NORM params missing");
+            return exec_gdn_l2_norm(input(0), output(0), p->eps);
+        }
+        case SCRAPGPU_OP_GDN_CONV_STEP:
+            return exec_gdn_conv_step(input(0), input(1), input(2), output(0), output(1));
         case SCRAPGPU_OP_SSM_CONV: {
             const auto * p = params_as<scrapgpu_ssm_conv_params>(desc->params, desc->params_size);
             if (p == nullptr) {
