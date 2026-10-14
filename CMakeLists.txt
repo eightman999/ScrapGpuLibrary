@@ -200,6 +200,10 @@ if (SCRAPGPU_BUILD_TESTS AND SCRAPGPU_BUILD_CORE)
     target_link_libraries(scrapgpu_cpu_tests PRIVATE scrapgpu_core)
     add_test(NAME scrapgpu_cpu_tests COMMAND scrapgpu_cpu_tests)
 
+    add_executable(scrapgpu_xs_ops_tests tests/xs/xs_ops_tests.cpp)
+    target_link_libraries(scrapgpu_xs_ops_tests PRIVATE scrapgpu_core)
+    add_test(NAME scrapgpu_xs_ops_tests COMMAND scrapgpu_xs_ops_tests)
+
     add_executable(scrapgpu_cpu_boundary_tests tests/cpu/boundary_tests.cpp)
     target_link_libraries(scrapgpu_cpu_boundary_tests PRIVATE scrapgpu_core)
     add_test(NAME scrapgpu_cpu_boundary_tests COMMAND scrapgpu_cpu_boundary_tests)

@@ -11,8 +11,8 @@
 //
 // Aliasing: the reference computes on host pointers, so an output must not overlap an input
 // unless the op is elementwise (every element is read before it is written) *and* the overlapping
-// tensor is the identical view: the same buffer, offset, dtype, shape and strides. Outputs must
-// never overlap each other.
+// tensor is the identical view, or it is a documented XS state update (only output 0 / input 0).
+// Outputs must never overlap each other.
 //
 // The descriptor math below (nbytes / span / contiguity) mirrors sgt:: (src/tensor/tensor.h) and
 // the reference's tensor_span_ok so that this file only needs the public headers of scrapgpu_core.
@@ -22,6 +22,7 @@
 #include "scrapgpu/reference.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -390,7 +391,7 @@ scrapgpu_status api_bad(const char * why, const char ** reason) {
 
 // mirrors the descriptor checks of scrapgpu_ref_execute, without touching tensor data: a desc that
 // is supported here can still fail at execute time only on index *values* (GET_ROWS / SET_ROWS /
-// MUL_MAT_ID ids), which the backend cannot see
+// MUL_MAT_ID ids / QSA_STEP position), which the backend cannot see
 scrapgpu_status api_supports(cpu_api_device * d, const scrapgpu_op_desc * desc, const char ** reason) {
     (void) d;
     const char * reason_local = nullptr;
@@ -817,6 +818,71 @@ scrapgpu_status api_supports(cpu_api_device * d, const scrapgpu_op_desc * desc, 
                 : api_bad("ARGSORT: dst ne0 must match the row length", reason);
         }
 
+
+        case SCRAPGPU_OP_GDN_STEP: {
+            const auto state = s0, q = s1, k = s2;
+            const auto v = api_load_desc(desc->inputs[3]);
+            const auto gate = api_load_desc(desc->inputs[4]);
+            const auto beta = api_load_desc(desc->inputs[5]);
+            const auto out = api_load_desc(desc->outputs[1]);
+            for (size_t i = 0; i < desc->input_count; ++i) {
+                if (desc->inputs[i].dtype != SCRAPGPU_DTYPE_F32) return api_no("GDN_STEP needs F32 inputs", reason);
+            }
+            if (!f32(dd) || !f32(out)) return api_no("GDN_STEP needs F32 outputs", reason);
+            const int64_t S = td_ne(state, 0), Hv = td_ne(state, 1), Hk = td_ne(q, 1);
+            const auto shape = [&](const scrapgpu_tensor_desc & t, int64_t n0, int64_t n1, int64_t n2) {
+                return td_ne(t, 0) == n0 && td_ne(t, 1) == n1 && td_ne(t, 2) == n2 && td_ne(t, 3) == 1;
+            };
+            if (S <= 0 || Hv <= 0 || Hk <= 0 || Hv % Hk != 0 || !shape(state, S, Hv, S) ||
+                !shape(q, S, Hk, 1) || !shape(k, S, Hk, 1) || !shape(v, S, Hv, 1) ||
+                !shape(gate, Hv, 1, 1) || !shape(beta, Hv, 1, 1) ||
+                !td_same_ne(state, dd) || !shape(out, S, Hv, 1))
+                return api_bad("GDN_STEP expects state[S,Hv,S], q/k[S,Hk], v/out[S,Hv], gate/beta[Hv] and Hv divisible by Hk", reason);
+            return SCRAPGPU_STATUS_OK;
+        }
+
+        case SCRAPGPU_OP_QSA_STEP: {
+            const auto p = api_params<scrapgpu_qsa_step_params>(desc);
+            if (s0.dtype != SCRAPGPU_DTYPE_I32 || dd.dtype != SCRAPGPU_DTYPE_I32)
+                return api_no("QSA_STEP uses I32 tensors", reason);
+            if (p.idx_block == 0 || p.idx_top_k == 0 ||
+                (uint64_t) p.idx_top_k + p.idx_block - 1 > (uint64_t) std::numeric_limits<int32_t>::max())
+                return api_bad("QSA_STEP requires positive idx_block and idx_top_k with an I32 selection width", reason);
+            for (int i = 1; i < 4; ++i) {
+                if (td_ne(s0, i) != 1 || td_ne(dd, i) != 1)
+                    return api_bad("QSA_STEP expects 1D input and output", reason);
+            }
+            return td_ne(s0, 0) == 1 && td_ne(dd, 0) == 4 ? SCRAPGPU_STATUS_OK
+                : api_bad("QSA_STEP needs an I32 position and a four-element I32 output", reason);
+        }
+
+        case SCRAPGPU_OP_GDN_L2_NORM: {
+            const auto p = api_params<scrapgpu_rms_norm_params>(desc);
+            if (!f32(s0) || !f32(dd)) return api_no("GDN_L2_NORM expects F32 tensors", reason);
+            if (!std::isfinite(p.eps) || p.eps <= 0.0f)
+                return api_bad("GDN_L2_NORM eps must be positive and finite", reason);
+            return td_same_ne(s0, dd) ? SCRAPGPU_STATUS_OK
+                : api_bad("GDN_L2_NORM output shape must match input", reason);
+        }
+
+        case SCRAPGPU_OP_GDN_CONV_STEP: {
+            const auto weights = s2;
+            const auto next_state = dd;
+            const auto out = api_load_desc(desc->outputs[1]);
+            if (!f32(s0) || !f32(s1) || !f32(weights) || !f32(next_state) || !f32(out))
+                return api_no("GDN_CONV_STEP expects F32 tensors", reason);
+            const int64_t C = td_ne(s1, 0), dc = td_ne(weights, 0);
+            const auto shape = [&](const scrapgpu_tensor_desc & t, int64_t n0, int64_t n1) {
+                return td_ne(t, 0) == n0 && td_ne(t, 1) == n1 &&
+                       td_ne(t, 2) == 1 && td_ne(t, 3) == 1;
+            };
+            if (dc < 2 || C <= 0 || !shape(s0, dc - 1, C) ||
+                !shape(s1, C, 1) || !shape(weights, dc, C) ||
+                !td_same_ne(s0, next_state) || !shape(out, C, 1))
+                return api_bad("GDN_CONV_STEP expects state[d_conv-1,C], x[C], weights[d_conv,C] and d_conv >= 2", reason);
+            return SCRAPGPU_STATUS_OK;
+        }
+
         default:
             return api_no("op is not implemented by the CPU backend", reason);
     }
@@ -887,6 +953,7 @@ bool api_op_alias_safe(scrapgpu_op op) {
         case SCRAPGPU_OP_UNARY:
         case SCRAPGPU_OP_GLU:
         case SCRAPGPU_OP_RMS_NORM:
+        case SCRAPGPU_OP_GDN_L2_NORM:
         case SCRAPGPU_OP_SOFT_MAX:
         case SCRAPGPU_OP_RMS_NORM_MUL:
         case SCRAPGPU_OP_ADD_RMS_NORM_MUL:
@@ -912,6 +979,12 @@ scrapgpu_status api_check_aliasing(scrapgpu_op op, const cpu_tref * in, size_t n
     for (size_t i = 0; i < nout; ++i) {
         for (size_t j = 0; j < nin; ++j) {
             if (!api_overlap(out[i], in[j])) {
+                continue;
+            }
+            // XeStrata's recurrence and convolution update independent state columns,
+            // making only the exact state input/output pair safe for in-place execution.
+            if ((op == SCRAPGPU_OP_GDN_STEP || op == SCRAPGPU_OP_GDN_CONV_STEP) &&
+                i == 0 && j == 0 && api_same_view(out[i], in[j])) {
                 continue;
             }
             if (!elementwise) {
@@ -970,6 +1043,10 @@ const char * api_op_name(int op) {
         case SCRAPGPU_OP_SET_ROWS_PAIR: return "SET_ROWS_PAIR";
         case SCRAPGPU_OP_MUL_MAT_MULTI: return "MUL_MAT_MULTI";
         case SCRAPGPU_OP_CONT_MUL_MAT: return "CONT_MUL_MAT";
+        case SCRAPGPU_OP_GDN_STEP: return "GDN_STEP";
+        case SCRAPGPU_OP_QSA_STEP: return "QSA_STEP";
+        case SCRAPGPU_OP_GDN_L2_NORM: return "GDN_L2_NORM";
+        case SCRAPGPU_OP_GDN_CONV_STEP: return "GDN_CONV_STEP";
         default: return "OP";
     }
 }

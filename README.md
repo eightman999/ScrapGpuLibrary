@@ -31,6 +31,8 @@ ScrapGpuLibrary
 
 2026-10-11 に CPU/RAM backend、BF16、予算付きの明示 CPU fallback、F32 Attention（GQA・causal・KV offset）を追加しました。PyTorch は CPU/OpenCL を選択できます。opencl12・CUDA backend は未実装です。今後の予定は [ROADMAP.md](ROADMAP.md) にまとめています。
 
+**XeStrata 向け演算（試験実装）**：GDN の状態更新、depthwise 畳み込み、L2 正規化、QSA のグラフ再生向けステップ情報を公開 op / CPU 参照実装に追加しています。形状・エイリアス・数値契約とテストは [docs/XESTRATA.md](docs/XESTRATA.md)。**現時点では CPU 実装のみで、SYCL バックエンドや XeStrata のモデル全体の実行には未対応です。**
+
 ### 検証済みの構成（2026-10-11）
 
 - TB250 の GT 430 / GT 710 / GT 730 / WX 2100 / RX 6400：PyTorch 2.14.1 の演算・Attention、llama.cpp `23b0202` の演算・生成を実機検証。NVIDIA 390.157 を維持し、AMD は rusticl を使用。

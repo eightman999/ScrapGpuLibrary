@@ -99,7 +99,7 @@ scrapgpu_status scrapgpu_op_desc_validate(const scrapgpu_op_desc * desc) {
     // supported range before a C++ enum load (which would itself be undefined).
     std::underlying_type<scrapgpu_op>::type op_id;
     std::memcpy(&op_id, &desc->op, sizeof(op_id));
-    if (op_id > SCRAPGPU_OP_CONT_MUL_MAT) {
+    if (op_id > SCRAPGPU_OP_GDN_CONV_STEP) {
         return invalid("unknown operation");
     }
     switch (desc->op) {
@@ -220,6 +220,32 @@ scrapgpu_status scrapgpu_op_desc_validate(const scrapgpu_op_desc * desc) {
         case SCRAPGPU_OP_CONT_MUL_MAT:
             // inputs [a (transposed F16 view), x], output [dst]
             return validate_counts(desc, 2, 1);
+        case SCRAPGPU_OP_GDN_STEP: {
+            if (validate_counts(desc, 6, 2) != SCRAPGPU_STATUS_OK) return SCRAPGPU_STATUS_INVALID_ARGUMENT;
+            for (size_t i = 0; i < 6; ++i) {
+                if (!is_f32(desc->inputs[i])) return invalid("GDN_STEP inputs must be F32");
+            }
+            return is_f32(desc->outputs[0]) && is_f32(desc->outputs[1])
+                ? SCRAPGPU_STATUS_OK : invalid("GDN_STEP outputs must be F32");
+        }
+        case SCRAPGPU_OP_QSA_STEP:
+            if (!has_params(desc, sizeof(scrapgpu_qsa_step_params))) return invalid("QSA_STEP params are missing");
+            if (validate_counts(desc, 1, 1) != SCRAPGPU_STATUS_OK) return SCRAPGPU_STATUS_INVALID_ARGUMENT;
+            return desc->inputs[0].dtype == SCRAPGPU_DTYPE_I32 && desc->outputs[0].dtype == SCRAPGPU_DTYPE_I32
+                ? SCRAPGPU_STATUS_OK : invalid("QSA_STEP tensors must be I32");
+        case SCRAPGPU_OP_GDN_L2_NORM:
+            if (!has_params(desc, sizeof(scrapgpu_rms_norm_params))) return invalid("GDN_L2_NORM params are missing");
+            if (validate_counts(desc, 1, 1) != SCRAPGPU_STATUS_OK) return SCRAPGPU_STATUS_INVALID_ARGUMENT;
+            return is_f32(desc->inputs[0]) && is_f32(desc->outputs[0])
+                ? SCRAPGPU_STATUS_OK : invalid("GDN_L2_NORM tensors must be F32");
+        case SCRAPGPU_OP_GDN_CONV_STEP: {
+            if (validate_counts(desc, 3, 2) != SCRAPGPU_STATUS_OK) return SCRAPGPU_STATUS_INVALID_ARGUMENT;
+            for (size_t i = 0; i < 3; ++i) {
+                if (!is_f32(desc->inputs[i])) return invalid("GDN_CONV_STEP inputs must be F32");
+            }
+            return is_f32(desc->outputs[0]) && is_f32(desc->outputs[1])
+                ? SCRAPGPU_STATUS_OK : invalid("GDN_CONV_STEP outputs must be F32");
+        }
     }
     return invalid("unknown op");
 }

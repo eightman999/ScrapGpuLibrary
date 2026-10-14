@@ -45,6 +45,11 @@ typedef enum scrapgpu_op {
     SCRAPGPU_OP_SET_ROWS_PAIR = 102,
     SCRAPGPU_OP_MUL_MAT_MULTI = 103,
     SCRAPGPU_OP_CONT_MUL_MAT = 104,
+    // XeStrata/Qwen3.8 decode primitives; backend support is opt-in.
+    SCRAPGPU_OP_GDN_STEP = 105,
+    SCRAPGPU_OP_QSA_STEP = 106,
+    SCRAPGPU_OP_GDN_L2_NORM = 107,
+    SCRAPGPU_OP_GDN_CONV_STEP = 108,
 } scrapgpu_op;
 
 typedef enum scrapgpu_unary_kind {
@@ -137,6 +142,14 @@ typedef struct scrapgpu_concat_params {
     uint32_t dim;
 } scrapgpu_concat_params;
 
+// QSA decode window metadata. idx_top_k is a CELL budget; the incomplete tail can
+// contribute up to (idx_block - 1) additional cells.
+typedef struct scrapgpu_qsa_step_params {
+    size_t struct_size;
+    uint32_t idx_block;
+    uint32_t idx_top_k;
+} scrapgpu_qsa_step_params;
+
 typedef struct scrapgpu_ssm_conv_params {
     size_t struct_size;
     uint32_t d_conv;
@@ -173,6 +186,19 @@ typedef struct scrapgpu_mul_mat_id_params {
     uint32_t max_prompt_tokens;
 } scrapgpu_mul_mat_id_params;
 
+// XS operator contracts (F32 unless noted):
+// GDN_STEP: inputs [state(S,Hv,S), q(S,Hk), k(S,Hk), v(S,Hv), gate(Hv), beta(Hv)];
+//           outputs [next_state(S,Hv,S), out(S,Hv)]. q is already scaled;
+//           gate is PRE-exp and beta is already sigmoid. h maps to h % Hk.
+//           Only next_state may exactly alias state; other overlaps forbidden.
+// QSA_STEP: inputs [position(1), I32]; outputs [step(4), I32] with
+//           step=[pos,pos+1,(pos+1)/idx_block,min(pos+1,idx_top_k+idx_block-1)].
+// GDN_L2_NORM: inputs [x(S,rows)]; outputs [y(S,rows)]; params RMS_NORM eps;
+//           unlike RMS_NORM it divides by sqrt(sum(x*x)+eps), not sqrt(mean+eps).
+// GDN_CONV_STEP: inputs [state(d_conv-1,C), x(C), weights(d_conv,C)];
+//                outputs [next_state(d_conv-1,C), y(C)]. state is oldest first,
+//                weights are per-channel taps in ascending order; d_conv >= 2.
+//                Only next_state may exactly alias state; other overlaps forbidden.
 typedef struct scrapgpu_op_desc {
     size_t struct_size;
     scrapgpu_op op;
