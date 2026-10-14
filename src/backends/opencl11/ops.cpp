@@ -229,5 +229,14 @@ bool cl11_op_argsort(cl11_device * c, const cl11_tensor & dst, const cl11_tensor
     const size_t  lsz  = (size_t) std::min<int64_t>(c->cfg.wg_row, std::max<int64_t>(32, npad / 2));
     cl11_args a(c->kernels[K_ARGSORT]);
     a.set(sr0.mem).set(sr0.td).set(d.mem).set(d.td).set(npad).set(desc);   // no local-memory argument: see k_argsort (Mesa Clover)
-    return cl11_launch(c->queue, c->exec, a, lsz, (size_t) (s0.d.ne[1] * s0.d.ne[2] * s0.d.ne[3]));
+    if (!cl11_launch(c->queue, c->exec, a, lsz, (size_t) (s0.d.ne[1] * s0.d.ne[2] * s0.d.ne[3]))) {
+        return false;
+    }
+    // Mesa rusticl: a kernel that follows the sort without a submission in between reads the indices before they are written (MUL_MAT_ID of a
+    // MoE model in generation: RX 6400, KL divergence 4.3 instead of 0.01). clFlush (a submission, no wait) is enough; clEnqueueBarrier and
+    // fences in the kernel are not.
+    if (c->cfg.flush_after_sort) {
+        clFlush(c->queue);
+    }
+    return true;
 }

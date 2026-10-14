@@ -90,6 +90,167 @@ static bool cl11_debug() {
 // device enumeration compatibility shim
 //
 
+// Devices that the driver cannot open next to an earlier one (NVIDIA 390: Fermi + Kepler) are served by a child ggml-rpc-server that opens only
+// that GPU, and are added as RPC devices (the ggml RPC backend must be loaded). Without the RPC backend or the server binary, or when the
+// start fails, the device stays dropped (the probe printed the warning). GGML_CL11_AUTO_RPC=0 turns this off.
+// Known limit: the RPC device reports every op as supported, so FLASH_ATTN_EXT reaches the server, which aborts: run with `-fa off`.
+#ifdef __linux__
+#include <arpa/inet.h>
+#include <dlfcn.h>
+#include <netinet/in.h>
+#include <signal.h>
+#include <sys/prctl.h>
+#include <sys/socket.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#include <fcntl.h>
+
+static std::vector<cl11_device_info> g_cl11_dropped;
+static std::vector<pid_t>            g_cl11_rpc_children;
+
+static void cl11_rpc_kill_children() {
+    for (pid_t pid : g_cl11_rpc_children) {
+        kill(pid, SIGTERM);
+    }
+    for (pid_t pid : g_cl11_rpc_children) {
+        waitpid(pid, nullptr, 0);
+    }
+    g_cl11_rpc_children.clear();
+}
+
+static int cl11_free_port() {
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) {
+        return 0;
+    }
+    sockaddr_in a = {};
+    a.sin_family = AF_INET;
+    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    socklen_t len = sizeof(a);
+    int port = 0;
+    if (bind(fd, (sockaddr *) &a, sizeof(a)) == 0 && getsockname(fd, (sockaddr *) &a, &len) == 0) {
+        port = ntohs(a.sin_port);
+    }
+    close(fd);
+    return port;
+}
+
+static bool cl11_port_listening(int port) {
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) {
+        return false;
+    }
+    sockaddr_in a = {};
+    a.sin_family = AF_INET;
+    a.sin_port = htons((uint16_t) port);
+    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    const bool ok = connect(fd, (sockaddr *) &a, sizeof(a)) == 0;
+    close(fd);
+    return ok;
+}
+
+static std::string cl11_dir_of(const void * sym) {
+    Dl_info di;
+    if (dladdr(sym, &di) == 0 || di.dli_fname == nullptr) {
+        return "";
+    }
+    return std::string(di.dli_fname);
+}
+
+static void cl11_serve_dropped_over_rpc() {
+    const char * off = getenv("GGML_CL11_AUTO_RPC");
+    if (g_cl11_dropped.empty() || (off != nullptr && strcmp(off, "0") == 0)) {
+        return;
+    }
+    ggml_backend_reg_t rpc = ggml_backend_reg_by_name("RPC");
+    typedef ggml_backend_reg_t (*add_server_t)(const char *);
+    add_server_t add_server = rpc ? (add_server_t) ggml_backend_reg_get_proc_address(rpc, "ggml_backend_rpc_add_server") : nullptr;
+    if (add_server == nullptr) {
+        GGML_LOG_WARN("%s: the RPC backend is not loaded: the dropped devices stay unused\n", __func__);
+        return;
+    }
+    std::string server = getenv("GGML_CL11_RPC_SERVER") ? getenv("GGML_CL11_RPC_SERVER") : "";
+    if (server.empty()) {
+        const std::string lib = cl11_dir_of((const void *) add_server);
+        const size_t slash = lib.rfind('/');
+        server = (slash == std::string::npos ? std::string(".") : lib.substr(0, slash)) + "/ggml-rpc-server";
+    }
+    const std::string plugin = cl11_dir_of((const void *) &cl11_serve_dropped_over_rpc);
+    if (access(server.c_str(), X_OK) != 0 || plugin.empty()) {
+        GGML_LOG_WARN("%s: ggml-rpc-server not found at %s (set GGML_CL11_RPC_SERVER): the dropped devices stay unused\n", __func__, server.c_str());
+        return;
+    }
+
+    static bool atexit_set = false;
+    if (!atexit_set) {
+        atexit_set = true;
+        atexit(cl11_rpc_kill_children);
+    }
+    for (const cl11_device_info & info : g_cl11_dropped) {
+        const int port = cl11_free_port();
+        if (port == 0) {
+            continue;
+        }
+        const std::string port_s = std::to_string(port);
+        const pid_t parent = getpid();
+        const pid_t pid = fork();
+        if (pid < 0) {
+            continue;
+        }
+        if (pid == 0) {
+            prctl(PR_SET_PDEATHSIG, SIGTERM);
+            if (getppid() != parent) {
+                _exit(1);
+            }
+            if (!cl11_debug()) {
+                const int nul = open("/dev/null", O_RDWR);
+                if (nul >= 0) {
+                    dup2(nul, 1);
+                    dup2(nul, 2);
+                }
+            }
+            setenv("GGML_BACKEND_PATH", plugin.c_str(), 1);
+            setenv("GGML_CL11_DEVICES", info.name.c_str(), 1);
+            setenv("GGML_CL11_PLATFORMS", info.platform_name.c_str(), 1);
+            setenv("GGML_CL11_AUTO_RPC", "0", 1);
+            unsetenv("SCRAPGPU_OPENCL11_DEVICES");
+            unsetenv("SCRAPGPU_OPENCL11_PLATFORMS");
+            execl(server.c_str(), server.c_str(), "-H", "127.0.0.1", "-p", port_s.c_str(), "-d", "CL11_0", "-t", "1", (char *) nullptr);
+            _exit(127);
+        }
+        g_cl11_rpc_children.push_back(pid);
+
+        bool up = false;
+        for (int i = 0; i < 600 && !up; i++) { // up to 60 s
+            int st = 0;
+            if (waitpid(pid, &st, WNOHANG) == pid) {
+                g_cl11_rpc_children.pop_back();
+                break;
+            }
+            up = cl11_port_listening(port);
+            if (!up) {
+                usleep(100 * 1000);
+            }
+        }
+        const std::string endpoint = "127.0.0.1:" + port_s;
+        ggml_backend_reg_t reg = up ? add_server(endpoint.c_str()) : nullptr;
+        if (reg == nullptr) {
+            GGML_LOG_WARN("%s: could not serve '%s' through ggml-rpc-server: the device stays unused\n", __func__, info.name.c_str());
+            if (up) {
+                kill(pid, SIGTERM);
+                waitpid(pid, nullptr, 0);
+                g_cl11_rpc_children.pop_back();
+            }
+            continue;
+        }
+        ggml_backend_register(reg);
+        GGML_LOG_WARN("%s: '%s' cannot share a process with the other GPUs: served by ggml-rpc-server (pid %d, %s) as an RPC device; "
+                      "run with -fa off (the RPC device reports FLASH_ATTN_EXT as supported, the CL11 server aborts on it)\n",
+                      __func__, info.name.c_str(), (int) pid, endpoint.c_str());
+    }
+}
+#endif
+
 static void cl11_probe_devices() {
     (void) cl11_probe_device_infos([](const cl11_device_info & info, bool strict_alloc) {
         auto ctx = std::make_unique<cl11_device_context>();
@@ -99,6 +260,12 @@ static void cl11_probe_devices() {
         ctx->device->index = (int) g_cl11_devices.size();
         ctx->device->name = "CL11_" + std::to_string(ctx->device->index);
         g_cl11_devices.push_back(std::move(ctx));
+    }, [](const cl11_device_info & info) {
+#ifdef __linux__
+        g_cl11_dropped.push_back(info);
+#else
+        (void) info;
+#endif
     });
 }
 
@@ -1304,6 +1471,9 @@ ggml_backend_reg_t ggml_backend_cl11_reg(void) {
     };
 
     cl11_probe_devices();
+#ifdef __linux__
+    cl11_serve_dropped_over_rpc();
+#endif
 
     for (auto & c : g_cl11_devices) {
         c->buft = ggml_backend_buffer_type {
