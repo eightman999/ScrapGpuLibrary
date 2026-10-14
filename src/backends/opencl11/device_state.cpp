@@ -167,6 +167,9 @@ bool cl11_ensure_program(cl11_device * dev) {
         if (const char * env = getenv("GGML_CL11_MAD")) {
             cfg.use_mad = atoi(env) != 0;
         }
+        if (const char * env = getenv("GGML_CL11_FLUSH_SORT")) {
+            cfg.flush_after_sort = atoi(env) != 0;
+        }
         if (const char * env = getenv("GGML_CL11_MVS_NRW")) {
             cfg.mvs_nrw = std::max(1, std::min(8, atoi(env)));
         }

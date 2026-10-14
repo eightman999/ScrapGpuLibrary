@@ -40,7 +40,7 @@ cmake --build build-cl11 -j --target llama-cli llama-bench test-backend-ops
 
 ### The check tools
 
-`tools/mvm_check` and `tools/attn_check` are built by hand; the command is in the header comment of each file.
+`tools/mvm_check`, `tools/attn_check` and `tools/mid_check` (MUL_MAT_ID of one token at MoE shapes, ids from an on-device ARGSORT, a 6-layer MoE chain against the CPU: run it on every GPU after a change to the queue handling, the sort or MUL_MAT_ID) are built by hand; the command is in the header comment of each file.
 
 ## Checks every change must pass
 
@@ -50,6 +50,7 @@ cmake --build build-cl11 -j --target llama-cli llama-bench test-backend-ops
 | `test-backend-ops`, three tunings | `for g in "" kepler fermi; do GGML_CL11_FORCE_GEN=$g GGML_BACKEND_PATH=<plugin> test-backend-ops test -b CL11_0; done` | every supported case passes. Mac: 3406 / 3406 in each of the three tunings. The number of supported cases depends on the device (GT 430 and GT 730 3441 / 3442, GT 710 and RX 6400 rusticl 3442 / 3442, WX 2100 3435 / 3435), so the criterion is "all supported cases pass", never the count |
 | `mvm_check` | per the header comment | 18 / 18 |
 | `attn_check` | per the header comment | 8 / 8 |
+| `mid_check` | per the header comment | every line ends with OK, `all OK` |
 | `ctest` | `ctest --test-dir build` | the contract tests and the dependency check pass |
 | Build-option identity | `GGML_CL11_PRINT_BUILD_OPTS=1` and compare | the sources and the option string passed to `clBuildProgram` are byte-for-byte the same as before the change |
 | Launch count | `GGML_CL11_LAUNCH_LOG=1` | launches per token do not increase (Qwen3-0.6B Q8_0: 452 on Kepler, 564 on Fermi) |

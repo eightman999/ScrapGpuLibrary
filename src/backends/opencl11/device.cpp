@@ -365,6 +365,11 @@ cl11_tuning cl11_tuning_for(const cl11_device_info & info) {
     if (cl11_lower(info.platform_name).find("clover") != std::string::npos) {
         t.split_programs = true;
     }
+    // Mesa rusticl on RDNA (RX 6400 measured; the WX 2100 / Polaris is correct without it): the kernels that follow an ARGSORT / TOP_K read
+    // its indices too early unless the queue is flushed (cl11_op_argsort); tg of LFM2.5-8B-A1B Q4_0 on the RX 6400 12.5 -> 9.1 t/s
+    if ((amd == CL11_AMD_RDNA || amd == CL11_AMD_UNKNOWN) && cl11_lower(info.platform_name).find("rusticl") != std::string::npos) {
+        t.cfg.flush_after_sort = true;
+    }
     // everything else: not tuned yet, same values as the defaults
     return t;
 }

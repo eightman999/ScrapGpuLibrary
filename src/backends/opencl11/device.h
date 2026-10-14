@@ -93,6 +93,7 @@ struct cl11_config {
     bool use_mad = false;
     cl11_mmx mmx;
     bool mvt_groups = false;
+    bool flush_after_sort = false; // clFlush after ARGSORT / TOP_K (Mesa rusticl, see cl11_op_argsort)
 };
 
 struct cl11_tuning {
