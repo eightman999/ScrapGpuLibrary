@@ -1116,7 +1116,8 @@ scrapgpu_status exec_qsa_step(const RTensor & position, const WTensor & step,
     if (position.dtype() != SCRAPGPU_DTYPE_I32 || step.dtype() != SCRAPGPU_DTYPE_I32)
         return ref_unsupported("QSA_STEP requires I32 position and output");
     if (p->idx_block == 0 || p->idx_top_k == 0 ||
-        static_cast<uint64_t>(p->idx_top_k) + p->idx_block - 1 > INT32_MAX)
+        static_cast<uint64_t>(p->idx_top_k) + p->idx_block - 1 >
+            static_cast<uint64_t>(std::numeric_limits<int32_t>::max()))
         return ref_invalid("QSA_STEP requires positive block/top_k with an I32 width");
     if (position.ne(0) != 1 || step.ne(0) != 4)
         return ref_invalid("QSA_STEP expects input[1] and output[4]");
@@ -1125,7 +1126,7 @@ scrapgpu_status exec_qsa_step(const RTensor & position, const WTensor & step,
             return ref_invalid("QSA_STEP expects one-dimensional tensors");
     }
     const int32_t pos = ld_i32(position.ptr());
-    if (pos < 0 || pos == INT32_MAX)
+    if (pos < 0 || pos == std::numeric_limits<int32_t>::max())
         return ref_invalid("QSA_STEP position must be in [0, INT32_MAX-1]");
     const int32_t n_kv = pos + 1;
     const int32_t completed_blocks = n_kv / static_cast<int32_t>(p->idx_block);
