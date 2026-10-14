@@ -173,7 +173,7 @@ static void gdn_step() {
     CHECK(scrapgpu_op_execute(cpu.stream, &d) == SCRAPGPU_STATUS_INVALID_ARGUMENT);
 
     // Bad head geometry must fail before touching tensors.
-    ins2[1] = tensor(SCRAPGPU_DTYPE_F32, 2, 3);
+    ins2[1].ne[1] = 3; // keep a real backing buffer; only geometry is wrong
     d = op(SCRAPGPU_OP_GDN_STEP, ins2, 6, outputs, 2);
     CHECK(scrapgpu_op_desc_validate(&d) == SCRAPGPU_STATUS_OK);
     CHECK(scrapgpu_op_supported(cpu.device, &d, nullptr) == SCRAPGPU_STATUS_INVALID_ARGUMENT);
